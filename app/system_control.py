@@ -1,12 +1,14 @@
-from fastapi import APIRouter, Body
+from fastapi import APIRouter
+from pydantic import BaseModel
 import subprocess
 
 router = APIRouter()
 
+class Command(BaseModel):
+    command: str
+
 @router.post("/system_control")
-def system_control(command: str = Body(...)):
-    try:
-        output = subprocess.check_output(command, shell=True, text=True)
-        return {"status": "success", "output": output}
-    except Exception as e:
-        return {"status": "error", "error": str(e)}
+def system_control(cmd: Command):
+    result = subprocess.run(cmd.command, shell=True, text=True, capture_output=True)
+    return {"stdout": result.stdout, "stderr": result.stderr}
+
