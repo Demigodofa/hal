@@ -1,9 +1,10 @@
 <!doctype html>
+<!-- VERSION: v19 (drive-agnostic GENESIS auto-detect + scheduler + GitHub-only) -->
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>HAL Web Relay — GENESIS (Bypass Render Locked + Scheduler + GENESIS-only)</title>
+  <title>HAL Web Relay — GENESIS v19 (Auto-detect + Scheduler + GitHub-only)</title
   <style>
     body{font-family:system-ui,Segoe UI,Roboto,Arial;margin:0;background:#f8fafc;color:#0f172a}
     .wrap{max-width:980px;margin:24px auto;padding:0 16px}
@@ -27,11 +28,11 @@
   <div class="wrap">
     <div class="card">
       <h1>HAL Web Relay — GENESIS</h1>
-      <p class="muted">Bypass Render is locked <b>ON</b>. Remote ops use GitHub API only. Folder selection is <b>GENESIS-only</b>.</p>
+      <p class="muted">Remote ops use GitHub API only. SSD selection is drive‑agnostic and will auto‑lock onto a <b>GENESIS</b> root/folder/marker.</p>
 
       <div class="row">
         <div class="col">
-          <label>SSD root (must be GENESIS)</label>
+          <label>SSD root (auto‑detects GENESIS)</label>
           <input id="ssdLabel" placeholder="Not selected" disabled />
         </div>
         <div><button class="btn" id="pickBtn">Choose Folder</button></div>
@@ -40,7 +41,7 @@
       <label><input id="rememberSsd" type="checkbox" checked> Remember SSD selection (IndexedDB)</label>
 
       <hr>
-      <h3>GitHub Direct (Render bypass is locked ON)</h3>
+      <h3>GitHub Direct (Render bypass locked ON)</h3>
       <div class="row">
         <div class="col"><label>GitHub Token (repo read/write)</label><input id="ghToken" type="password" placeholder="fine-grained token"/></div>
         <div class="col"><label>Repo</label><input id="ghRepo" value="Demigodofa/hal"/></div>
@@ -71,14 +72,15 @@
 
       <label style="margin-top:12px">Log</label>
       <div class="log" id="log"></div>
-      <p class="muted">Local shell is not available in the browser. This page reads/writes GENESIS and pushes to GitHub.</p>
+      <p class="muted">This page reads/writes GENESIS and pushes to GitHub.</p>
     </div>
   </div>
 
 <script>
 (function(){
   const $ = (s)=>document.querySelector(s);
-  const log = (...a)=>{ const t=a.map(x=>typeof x==='string'?x:JSON.stringify(x,null,2)).join(' '); const el=$('#log'); el.textContent += (el.textContent?'\n':'') + t; el.scrollTop=el.scrollHeight; };
+  const log = (...a)=>{ const t=a.map(x=>typeof x==='string'?x:JSON.stringify(x,null,2)).join(' '); const el=$('#log'); el.textContent += (el.textContent?'
+':'') + t; el.scrollTop=el.scrollHeight; };
 
   // ---- Settings ----
   const LS_KEY='hal-web-relay-settings';
@@ -91,19 +93,35 @@
   function maybeSave(){ if(!$('#rememberSettings').checked) return; S.ghToken=$('#ghToken').value; S.ghRepo=$('#ghRepo').value.trim(); S.ghBranch=$('#ghBranch').value.trim(); S.rememberSettings=$('#rememberSettings').checked; S.rememberSsd=$('#rememberSsd').checked; S.autoClear=$('#autoClear').value; S.schedEnable=$('#schedEnable').checked; S.schedEvery=parseInt($('#schedEvery').value||'30',10); save(S); }
   ['input','change'].forEach(ev=>document.body.addEventListener(ev,e=>{ if(['INPUT','SELECT','TEXTAREA'].includes(e.target.tagName)) maybeSave(); }));
 
-  // ---- SSD via IndexedDB (GENESIS-only) ----
+  // ---- SSD via IndexedDB (drive‑agnostic GENESIS detection) ----
   let ssdRoot=null; const DB_NAME='hal-relay', DB_STORE='handles';
   function idb(){ return new Promise((res,rej)=>{ const r=indexedDB.open(DB_NAME,1); r.onupgradeneeded=()=>{ r.result.createObjectStore(DB_STORE); }; r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); }); }
   async function putHandle(k,h){ const db=await idb(); return new Promise((res,rej)=>{ const tx=db.transaction(DB_STORE,'readwrite'); tx.objectStore(DB_STORE).put(h,k); tx.oncomplete=()=>res(); tx.onerror=()=>rej(tx.error); }); }
   async function getHandle(k){ const db=await idb(); return new Promise((res,rej)=>{ const tx=db.transaction(DB_STORE,'readonly'); const q=tx.objectStore(DB_STORE).get(k); q.onsuccess=()=>res(q.result); q.onerror=()=>rej(q.error); }); }
-  function assertGenesisName(h){ const name=h?.name||''; if(name!=='GENESIS'){ throw new Error(`selected root is '${name}', expected 'GENESIS'`); } }
-  async function setSsd(h){ assertGenesisName(h); ssdRoot=h||null; $('#ssdLabel').value = ssdRoot ? (ssdRoot.name||'(selected)') : ''; if (ssdRoot && $('#rememberSsd').checked){ try{ await putHandle('ssdRoot', ssdRoot);}catch{} } }
+
+  // Try to coerce any chosen directory into a GENESIS root using heuristics/marker
+  async function coerceGenesis(h){
+    const upper=(h?.name||'').toUpperCase();
+    if(upper==='GENESIS') return h; // exact folder
+    // If a GENESIS folder exists under the chosen root, use it
+    try{ const d=await h.getDirectoryHandle('GENESIS',{create:false}); return d; }catch{}
+    // If marker exists, accept chosen dir
+    try{ const f=await h.getFileHandle('.genesis_root',{create:false}); await f.getFile(); return h; }catch{}
+    // Fallback: assume chosen is the root, create marker so we remember
+    try{ const f=await h.getFileHandle('.genesis_root',{create:true}); const w=await f.createWritable(); await w.write('ok'); await w.close(); }catch{}
+    return h;
+  }
+
+  async function setSsd(h){ const g=await coerceGenesis(h); ssdRoot=g||null; const nm=(g&&g.name)||'GENESIS (drive root)'; $('#ssdLabel').value=nm; if (ssdRoot && $('#rememberSsd').checked){ try{ await putHandle('ssdRoot', ssdRoot);}catch{} } }
+
   function showPermBanner(){ if(document.getElementById('permBanner')) return; const b=document.createElement('div'); b.id='permBanner'; b.innerHTML='<span>Grant SSD access to <b>GENESIS</b> to continue.</span> <button id="grantSsd">Grant SSD Access</button>'; document.body.appendChild(b); document.getElementById('grantSsd').onclick=()=>reconnectSsd(true); }
   function hidePermBanner(){ const b=document.getElementById('permBanner'); if(b) b.remove(); }
-  async function reconnectSsd(userActivation){ try{ const h=await getHandle('ssdRoot'); if(!h){ log('no saved SSD handle — click Choose Folder and pick GENESIS'); showPermBanner(); return; } let perm=await h.queryPermission({mode:'readwrite'}); if(perm!=='granted'){ if(userActivation){ perm=await h.requestPermission({mode:'readwrite'}); } else { showPermBanner(); throw new Error('permission not granted yet'); } } assertGenesisName(h); await setSsd(h); log('SSD reconnected:', h.name); hidePermBanner(); }catch(e){ log('reconnect error:', e?.message||e); } }
-  $('#pickBtn').addEventListener('click', async ()=>{ try{ const h=await window.showDirectoryPicker(); assertGenesisName(h); await setSsd(h); log('selected root:', h.name);}catch(err){ log('picker error:', err?.message||'canceled'); } });
+
+  async function reconnectSsd(userActivation){ try{ const h=await getHandle('ssdRoot'); if(!h){ log('no saved SSD handle — click Choose Folder and pick drive root or GENESIS folder'); showPermBanner(); return; } let perm=await h.queryPermission({mode:'readwrite'}); if(perm!=='granted'){ if(userActivation){ perm=await h.requestPermission({mode:'readwrite'}); } else { showPermBanner(); throw new Error('permission not granted yet'); } } await setSsd(h); log('SSD reconnected'); hidePermBanner(); }catch(e){ log('reconnect error:', e?.message||e); } }
+
+  $('#pickBtn').addEventListener('click', async ()=>{ try{ const h=await window.showDirectoryPicker(); await setSsd(h); log('selected root set'); }catch(err){ log('picker error:', err?.message||'canceled'); } });
   $('#reconnectBtn').addEventListener('click', ()=>reconnectSsd(true));
-  window.addEventListener('DOMContentLoaded', ()=>{ reconnectSsd(false); log('Boot OK (bypass render locked, GENESIS-only)'); if($('#schedEnable').checked){ startScheduler($('#schedEvery').value); } });
+  window.addEventListener('DOMContentLoaded', ()=>{ reconnectSsd(false); log('Boot OK (GitHub-only, GENESIS auto-detect)'); if($('#schedEnable').checked){ startScheduler($('#schedEvery').value); } });
 
   // ---- Local FS helpers ----
   const splitPath=(p)=>String(p).split('/').filter(Boolean).filter(s=>s!=='.'&&s!=='..');
@@ -114,9 +132,13 @@
   async function readIfExists(root,rel){ try{ return await readFile(root,rel); }catch{ return {path:rel,content:''}; } }
   async function listDir(root,rel='.') { const dir=rel==='.'?root:await ensureDir(root,rel); const items=[]; for await (const [name,handle] of dir.entries()){ const item={name,is_dir:handle.kind==='directory'}; if(handle.kind==='file'){ const f=await handle.getFile(); item.size=f.size; } items.push(item);} return {path:rel,items}; }
   async function deleteFile(root,rel){ const {dir,name}=await getParent(root,rel,false); await dir.removeEntry(name,{recursive:false}); return {path:rel,deleted:true}; }
-  async function appendText(root,rel,text,ensureSep){ const cur=(await readIfExists(root,rel)).content||''; const sep = cur && ensureSep && !cur.endsWith('\n') ? '\n' : ''; return await writeFile(root,rel,cur+sep+(text||'')); }
-  async function appendJsonArray(root,rel,obj){ let cur=''; try{ cur=(await readFile(root,rel)).content; }catch{} let arr=[]; try{ arr=cur?JSON.parse(cur):[]; if(!Array.isArray(arr)) throw 0; }catch{ arr=[]; } arr.push(obj); const pretty=JSON.stringify(arr,null,2)+'\n'; return await writeFile(root,rel,pretty); }
-  async function appendJsonl(root,rel,obj){ const line=JSON.stringify(obj)+'\n'; return await appendText(root,rel,line,false); }
+  async function appendText(root,rel,text,ensureSep){ const cur=(await readIfExists(root,rel)).content||''; const sep = cur && ensureSep && !cur.endsWith('
+') ? '
+' : ''; return await writeFile(root,rel,cur+sep+(text||'')); }
+  async function appendJsonArray(root,rel,obj){ let cur=''; try{ cur=(await readFile(root,rel)).content; }catch{} let arr=[]; try{ arr=cur?JSON.parse(cur):[]; if(!Array.isArray(arr)) throw 0; }catch{ arr=[]; } arr.push(obj); const pretty=JSON.stringify(arr,null,2)+'
+'; return await writeFile(root,rel,pretty); }
+  async function appendJsonl(root,rel,obj){ const line=JSON.stringify(obj)+'
+'; return await appendText(root,rel,line,false); }
 
   // ---- GitHub (bypass only) ----
   const ghBase='https://api.github.com';
@@ -127,7 +149,7 @@
 
   // ---- Checkpointing ----
   const nowIso=()=>new Date().toISOString();
-  const slug=()=>nowIso().replace(/[:.]/g,'').replace('Z','Z'); // e.g., 2025-09-07T145322Z
+  const slug=()=>nowIso().replace(/[:.]/g,'').replace('Z','Z');
   async function checkpointNow(){
     try{
       if(!ssdRoot) throw new Error('no SSD');
@@ -137,7 +159,8 @@
       const journal=(await readIfExists(ssdRoot,'memory/short_term/journal.jsonl')).content||'';
       let tasksParsed=[]; try{ tasksParsed=JSON.parse(tasks); if(!Array.isArray(tasksParsed)) tasksParsed=[]; }catch{ tasksParsed=[]; }
       const payload={ ts: nowIso(), tasks: tasksParsed, journal };
-      const content=JSON.stringify(payload,null,2)+'\n';
+      const content=JSON.stringify(payload,null,2)+'
+';
       const path=`memory/short_term/checkpoints/short_term-${slug()}.json`;
       const out=await ghPutFile({repo,path,content,message:`chore: checkpoint ${payload.ts}`,branch});
       log('checkpoint ok:', {path, commit:(out&&out.commit&&out.commit.sha?out.commit.sha.slice(0,7):'')});
@@ -147,8 +170,6 @@
   let schedTimer=null;
   function startScheduler(mins){ stopScheduler(); const ms=Math.max(1,parseInt(mins||30,10))*60*1000; schedTimer=setInterval(checkpointNow, ms); log('scheduler on:', ms/60000, 'min'); }
   function stopScheduler(){ if(schedTimer){ clearInterval(schedTimer); schedTimer=null; log('scheduler off'); } }
-
-  // UI wiring for scheduler
   $('#schedEnable').addEventListener('change', (e)=>{ if(e.target.checked){ startScheduler($('#schedEvery').value); } else { stopScheduler(); } maybeSave(); });
   $('#schedEvery').addEventListener('change', ()=>{ if($('#schedEnable').checked){ startScheduler($('#schedEvery').value); } maybeSave(); });
   $('#schedNow').addEventListener('click', checkpointNow);
@@ -161,7 +182,6 @@
       const rawAll=$('#cmdInput').value; const raw=extractBlock(rawAll); const parsed=normalize(JSON.parse(raw));
       const target=String(parsed.target||'local').toLowerCase(); const op=String(parsed.op||'').toLowerCase(); const a=parsed.args||{};
 
-      // Local
       if(target==='local'){
         if(!ssdRoot){ log('local: no SSD selected'); showPermBanner(); }
         else {
@@ -182,7 +202,6 @@
         }
       }
 
-      // GitHub (bypass forced ON)
       if(target==='render' || op.startsWith('github.')){
         if(!op.startsWith('github.')){ log('render disabled (bypass ON): op not github.* ->', op); }
         else {
@@ -198,15 +217,14 @@
   $('#runOnce').addEventListener('click', processOnce);
   $('#clearLog').addEventListener('click', ()=>{ $('#log').textContent=''; });
 
-  // ---- Permission banner & reconnect ----
   function showPermBanner(){ if(document.getElementById('permBanner')) return; const b=document.createElement('div'); b.id='permBanner'; b.innerHTML='<span>HAL needs SSD access to <b>GENESIS</b>.</span> <button id="grantSsd">Grant SSD Access</button>'; document.body.appendChild(b); document.getElementById('grantSsd').onclick=()=>reconnectSsd(true); }
   function hidePermBanner(){ const b=document.getElementById('permBanner'); if(b) b.remove(); }
 
-  // ---- Clipboard watcher (optional) ----
   let watchTimer=null; $('#watchClipboard').addEventListener('click', async (e)=>{ if(watchTimer){ clearInterval(watchTimer); watchTimer=null; e.target.textContent='Watch Clipboard'; return;} try{ await navigator.permissions.query({name:'clipboard-read'});}catch{} e.target.textContent='Watching…'; let last=''; watchTimer=setInterval(async()=>{ try{ const t=await navigator.clipboard.readText(); if(t && t!==last && t.includes('[KEV_AI::command]')){ last=t; $('#cmdInput').value=t; log('clipboard captured block'); await processOnce(); } }catch{} },1200); });
 
-  // ---- Auto-exec queue from extension/bookmarklet ----
-  (function(){ const Q=[]; let busy=false; async function run(raw){ $('#cmdInput').value='[KEV_AI::command]\n'+raw+'\n[/KEV_AI::command]'; await processOnce(); } async function pump(){ if(busy) return; busy=true; try{ while(Q.length){ await run(Q.shift()); } } finally { busy=false; } } window.addEventListener('message',(ev)=>{ const d=ev.data||{}; if(d.type==='HAL_PAYLOAD' && typeof d.raw==='string'){ Q.push(d.raw); pump(); } if(d.type==='HAL_CONTROL' && d.cmd==='settings' && d.settings){ try{ const s=d.settings; if(s.ghToken!==undefined){ $('#ghToken').value=s.ghToken; } if(s.ghRepo){ $('#ghRepo').value=s.ghRepo; } if(s.ghBranch){ $('#ghBranch').value=s.ghBranch; } const rs=$('#rememberSettings'); if(rs&&!rs.checked){ rs.checked=true; } maybeSave(); }catch{} } if(d.type==='HAL_CONTROL' && d.cmd==='reconnect'){ reconnectSsd(false); } if(d.type==='HAL_CONTROL' && d.cmd==='scheduler'){ if(d.settings && d.settings.enabled){ startScheduler(d.settings.interval_mins||30); $('#schedEnable').checked=true; $('#schedEvery').value=String(d.settings.interval_mins||30);} else { stopScheduler(); $('#schedEnable').checked=false; } maybeSave(); } if(d.type==='HAL_CONTROL' && d.cmd==='checkpoint_now'){ checkpointNow(); } }); })();
+  (function(){ const Q=[]; let busy=false; async function run(raw){ $('#cmdInput').value='[KEV_AI::command]
+'+raw+'
+[/KEV_AI::command]'; await processOnce(); } async function pump(){ if(busy) return; busy=true; try{ while(Q.length){ await run(Q.shift()); } } finally { busy=false; } } window.addEventListener('message',(ev)=>{ const d=ev.data||{}; if(d.type==='HAL_PAYLOAD' && typeof d.raw==='string'){ Q.push(d.raw); pump(); } if(d.type==='HAL_CONTROL' && d.cmd==='settings' && d.settings){ try{ const s=d.settings; if(s.ghToken!==undefined){ $('#ghToken').value=s.ghToken; } if(s.ghRepo){ $('#ghRepo').value=s.ghRepo; } if(s.ghBranch){ $('#ghBranch').value=s.ghBranch; } const rs=$('#rememberSettings'); if(rs&&!rs.checked){ rs.checked=true; } maybeSave(); }catch{} } if(d.type==='HAL_CONTROL' && d.cmd==='reconnect'){ reconnectSsd(false); } if(d.type==='HAL_CONTROL' && d.cmd==='scheduler'){ if(d.settings && d.settings.enabled){ startScheduler(d.settings.interval_mins||30); $('#schedEnable').checked=true; $('#schedEvery').value=String(d.settings.interval_mins||30);} else { stopScheduler(); $('#schedEnable').checked=false; } maybeSave(); } if(d.type==='HAL_CONTROL' && d.cmd==='checkpoint_now'){ checkpointNow(); } }); })();
 })();
 </script>
 </body>
