@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- VERSION: v19.1 (drive-agnostic GENESIS auto-detect + scheduler + GitHub-only; fixed CSS tag) -->
+<!-- VERSION: v19.2 (drive-agnostic GENESIS auto-detect + scheduler + GitHub-only; fixed CSS tag) -->
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>HAL Web Relay — GENESIS v19.1</title>
+  <title>HAL Web Relay — GENESIS v19.2</title>
   <style>
     body{font-family:system-ui,Segoe UI,Roboto,Arial;margin:0;background:#f8fafc;color:#0f172a}
     .wrap{max-width:980px;margin:24px auto;padding:0 16px}
@@ -115,9 +115,27 @@
 
   async function reconnectSsd(userActivation){ try{ const h=await getHandle('ssdRoot'); if(!h){ log('no saved SSD handle — click Choose Folder and pick drive root or GENESIS folder'); showPermBanner(); return; } let perm=await h.queryPermission({mode:'readwrite'}); if(perm!=='granted'){ if(userActivation){ perm=await h.requestPermission({mode:'readwrite'}); } else { showPermBanner(); throw new Error('permission not granted yet'); } } await setSsd(h); log('SSD reconnected'); hidePermBanner(); }catch(e){ log('reconnect error:', e?.message||e); } }
 
-  $('#pickBtn').addEventListener('click', async ()=>{ try{ const h=await window.showDirectoryPicker(); await setSsd(h); log('selected root set'); }catch(err){ log('picker error:', err?.message||'canceled'); } });
-  $('#reconnectBtn').addEventListener('click', ()=>reconnectSsd(true));
-  window.addEventListener('DOMContentLoaded', ()=>{ reconnectSsd(false); log('Boot OK (GitHub-only, GENESIS auto-detect)'); if($('#schedEnable').checked){ startScheduler($('#schedEvery').value); } });
+  $('#pickBtn').addEventListener('click', async ()=>{
+    try{
+      log('picker: opening…');
+      if (!('showDirectoryPicker' in window)) {
+        log('picker error: File System Access API not available (use Chrome/Edge 86+; not Firefox/Safari).');
+        alert('Your browser does not support folder access. Use Chrome or Edge.');
+        return;
+      }
+      const h=await window.showDirectoryPicker();
+      await setSsd(h);
+      log('selected root set');
+    }catch(err){
+      log('picker error:', err?.message||'canceled');
+    }
+  }); await setSsd(h); log('selected root set'); }catch(err){ log('picker error:', err?.message||'canceled'); } });
+  $('#reconnectBtn').addEventListener('click', ()=>{ log('reconnect: requesting permission…'); reconnectSsd(true); });
+  window.addEventListener('DOMContentLoaded', ()=>{
+    log('Boot OK (GitHub-only, GENESIS auto-detect)');
+    reconnectSsd(false);
+    if($('#schedEnable').checked){ startScheduler($('#schedEvery').value); }
+  }); log('Boot OK (GitHub-only, GENESIS auto-detect)'); if($('#schedEnable').checked){ startScheduler($('#schedEvery').value); } });
 
   // ---- Local FS helpers ----
   const splitPath=(p)=>String(p).split('/').filter(Boolean).filter(s=>s!=='.'&&s!=='..');
