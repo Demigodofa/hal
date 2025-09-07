@@ -1,176 +1,57 @@
 <!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>HAL Web Relay — GENESIS (Bypass Render Locked)</title>
-  <style>
-    body{font-family:system-ui,Segoe UI,Roboto,Arial;margin:0;background:#f8fafc;color:#0f172a}
-    .wrap{max-width:980px;margin:24px auto;padding:0 16px}
-    .card{background:#fff;border-radius:12px;box-shadow:0 6px 18px rgba(0,0,0,.06);padding:16px}
-    label{display:block;margin:8px 0 4px;font-size:12px;color:#475569}
-    input,textarea,select,button{font:inherit}
-    input,textarea,select{width:100%;box-sizing:border-box;border:1px solid #e5e7eb;border-radius:10px;padding:10px 12px;background:#fff}
-    textarea{min-height:160px;resize:vertical}
-    .row{display:flex;gap:12px;align-items:flex-end}
-    .row>.col{flex:1}
-    .btn{padding:10px 14px;border:none;border-radius:10px;background:#111827;color:#fff;cursor:pointer}
-    .btn.alt{background:#334155}
-    .btn.ok{background:#16a34a}
-    .log{font-family:ui-monospace,Consolas,Menlo,monospace;background:#0b1020;color:#e5e7eb;border-radius:10px;padding:12px;height:300px;overflow:auto;white-space:pre-wrap}
-    .muted{color:#64748b;font-size:12px}
-    #permBanner{position:fixed;left:16px;right:16px;bottom:16px;background:#111827;color:#fff;padding:12px;border-radius:10px;box-shadow:0 6px 18px rgba(0,0,0,.2);z-index:9999;display:flex;gap:12px;align-items:center}
-    #grantSsd{padding:8px 12px;border:0;border-radius:10px;background:#16a34a;color:#fff;cursor:pointer}
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <div class="card">
-      <h1>HAL Web Relay — GENESIS</h1>
-      <p class="muted">Bypass Render is locked <b>ON</b>. All remote ops use GitHub API. Choose <b>GENESIS</b> once per session (browser requires a click).</p>
 
-      <div class="row">
-        <div class="col">
-          <label>SSD root</label>
-          <input id="ssdLabel" placeholder="Not selected" disabled />
-        </div>
-        <div><button class="btn" id="pickBtn">Choose Folder</button></div>
-        <div><button class="btn alt" id="reconnectBtn" title="Try saved handle">Reconnect</button></div>
-      </div>
-      <label><input id="rememberSsd" type="checkbox" checked> Remember SSD selection (IndexedDB)</label>
 
-      <hr>
-      <h3>GitHub Direct (Render bypass is locked ON)</h3>
-      <div class="row">
-        <div class="col"><label>GitHub Token (repo read/write)</label><input id="ghToken" type="password" placeholder="fine-grained token"/></div>
-        <div class="col"><label>Repo</label><input id="ghRepo" value="Demigodofa/hal"/></div>
-      </div>
-      <div class="row">
-        <div class="col"><label>Branch</label><input id="ghBranch" value="main"/></div>
-        <div class="col"><label>Auto-clear command after success</label><select id="autoClear"><option value="1" selected>Yes</option><option value="0">No</option></select></div>
-      </div>
-      <label><input id="rememberSettings" type="checkbox" checked> Remember settings (localStorage)</label>
+// Local
+if(target==='local'){
+if(!ssdRoot){ log('local: no SSD selected'); showPermBanner(); }
+else {
+if(op==='file_ops.read_file'||op==='read_file'){ log('local read:', await readFile(ssdRoot,a.path)); }
+else if(op==='file_ops.write_file'||op==='write_file'){ log('local write:', await writeFile(ssdRoot,a.path,a.content||'')); }
+else if(op==='file_ops.list_dir'||op==='list_dir'){ log('local list:', await listDir(ssdRoot,a.path||'.')); }
+else if(op==='file_ops.mkdirs'||op==='mkdirs'){ await ensureDir(ssdRoot,a.path); log('local mkdirs ok:', a.path); }
+else if(op==='file_ops.delete_file'||op==='delete_file'){ log('local delete:', await deleteFile(ssdRoot,a.path)); }
+else if(op==='file_ops.append_file'||op==='append_file'){
+const mode=String(a.mode||'text').toLowerCase();
+if(mode==='json-array'){ const obj=a.json ?? (a.content?JSON.parse(a.content):{}); log('local append (json-array):', await appendJsonArray(ssdRoot,a.path,obj)); }
+else if(mode==='jsonl'){ const obj=a.json ?? (a.content?JSON.parse(a.content):{}); log('local append (jsonl):', await appendJsonl(ssdRoot,a.path,obj)); }
+else { const ensure = a.ensureNewline!==false; log('local append (text):', await appendText(ssdRoot,a.path,a.content||'',ensure)); }
+}
+else if(op==='relay.checkpoint_now'){ await checkpointNow(); }
+else if(op==='relay.scheduler'){ if(a.enabled){ startScheduler(a.interval_mins||30); $('#schedEnable').checked=true; $('#schedEvery').value=String(a.interval_mins||30); } else { stopScheduler(); $('#schedEnable').checked=false; } maybeSave(); }
+else { log('local unknown op:', op); }
+}
+}
 
-      <label style="margin-top:10px">Command block or JSON</label>
-      <textarea id="cmdInput" spellcheck="false" placeholder="Paste [KEV_AI::command]... or raw JSON here"></textarea>
-      <div class="row" style="margin-top:8px">
-        <div class="col">
-          <button class="btn ok" id="runOnce">Process Once</button>
-          <button class="btn alt" id="clearLog">Clear Log</button>
-          <button class="btn" id="watchClipboard">Watch Clipboard</button>
-        </div>
-      </div>
 
-      <label style="margin-top:12px">Log</label>
-      <div class="log" id="log"></div>
-      <p class="muted">Local shell is not available in the browser. Use GitHub or a server for code execution.</p>
-    </div>
-  </div>
+// GitHub (bypass forced ON)
+if(target==='render' || op.startsWith('github.')){
+if(!op.startsWith('github.')){ log('render disabled (bypass ON): op not github.* ->', op); }
+else {
+const repo=a.repo||$('#ghRepo').value.trim();
+if(op==='github.put_file'){ const out=await ghPutFile({repo,path:a.path,content:a.content||'',message:a.message||'',branch:a.branch||$('#ghBranch').value.trim()}); log('github put_file:', {path:a.path, commit:(out&&out.commit&&out.commit.sha?out.commit.sha.slice(0,7):'')}); }
+else { log('github op not supported:', op); }
+}
+}
 
-<script>
-(function(){
-  const $ = (s)=>document.querySelector(s);
-  const log = (...a)=>{ const t=a.map(x=>typeof x==='string'?x:JSON.stringify(x,null,2)).join(' '); const el=$('#log'); el.textContent += (el.textContent?'\n':'') + t; el.scrollTop=el.scrollHeight; };
 
-  // ---- Settings ----
-  const LS_KEY='hal-web-relay-settings';
-  const DEF={ ghToken:'', ghRepo:'Demigodofa/hal', ghBranch:'main', rememberSettings:true, rememberSsd:true, autoClear:'1' };
-  function load(){ try{ return Object.assign({},DEF, JSON.parse(localStorage.getItem(LS_KEY)||'{}')); }catch{ return Object.assign({},DEF); } }
-  function save(s){ try{ localStorage.setItem(LS_KEY, JSON.stringify(s)); }catch{}
-  }
-  const S = load();
-  $('#ghToken').value=S.ghToken; $('#ghRepo').value=S.ghRepo; $('#ghBranch').value=S.ghBranch; $('#rememberSettings').checked=!!S.rememberSettings; $('#rememberSsd').checked=!!S.rememberSsd; $('#autoClear').value=S.autoClear||'1';
-  function maybeSave(){ if(!$('#rememberSettings').checked) return; S.ghToken=$('#ghToken').value; S.ghRepo=$('#ghRepo').value.trim(); S.ghBranch=$('#ghBranch').value.trim(); S.rememberSettings=$('#rememberSettings').checked; S.rememberSsd=$('#rememberSsd').checked; S.autoClear=$('#autoClear').value; save(S); }
-  ['input','change'].forEach(ev=>document.body.addEventListener(ev,e=>{ if(['INPUT','SELECT','TEXTAREA'].includes(e.target.tagName)) maybeSave(); }));
+if($('#autoClear').value==='1') $('#cmdInput').value='';
+}catch(e){ log('error:', e?.message||e); }
+}
+$('#runOnce').addEventListener('click', processOnce);
+$('#clearLog').addEventListener('click', ()=>{ $('#log').textContent=''; });
 
-  // ---- SSD via IndexedDB ----
-  let ssdRoot=null; const DB_NAME='hal-relay', DB_STORE='handles';
-  function idb(){ return new Promise((res,rej)=>{ const r=indexedDB.open(DB_NAME,1); r.onupgradeneeded=()=>{ r.result.createObjectStore(DB_STORE); }; r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); }); }
-  async function putHandle(k,h){ const db=await idb(); return new Promise((res,rej)=>{ const tx=db.transaction(DB_STORE,'readwrite'); tx.objectStore(DB_STORE).put(h,k); tx.oncomplete=()=>res(); tx.onerror=()=>rej(tx.error); }); }
-  async function getHandle(k){ const db=await idb(); return new Promise((res,rej)=>{ const tx=db.transaction(DB_STORE,'readonly'); const q=tx.objectStore(DB_STORE).get(k); q.onsuccess=()=>res(q.result); q.onerror=()=>rej(q.error); }); }
-  async function setSsd(h){ ssdRoot=h||null; $('#ssdLabel').value = ssdRoot ? (ssdRoot.name||'(selected)') : ''; if (ssdRoot && $('#rememberSsd').checked){ try{ await putHandle('ssdRoot', ssdRoot);}catch{} } }
-  function showPermBanner(){ if(document.getElementById('permBanner')) return; const b=document.createElement('div'); b.id='permBanner'; b.innerHTML='<span>HAL needs SSD access (GENESIS).</span> <button id="grantSsd">Grant SSD Access</button>'; document.body.appendChild(b); document.getElementById('grantSsd').onclick=()=>reconnectSsd(true); }
-  function hidePermBanner(){ const b=document.getElementById('permBanner'); if(b) b.remove(); }
-  async function reconnectSsd(userActivation){ try{ const h=await getHandle('ssdRoot'); if(!h){ log('no saved SSD handle — click Choose Folder and select GENESIS'); showPermBanner(); return; } let perm=await h.queryPermission({mode:'readwrite'}); if(perm!=='granted'){ if(userActivation){ perm=await h.requestPermission({mode:'readwrite'}); } else { showPermBanner(); throw new Error('permission not granted yet'); } } if(perm==='granted'){ await setSsd(h); log('SSD reconnected:', h.name); hidePermBanner(); } else { log('SSD permission denied'); showPermBanner(); } }catch(e){ log('reconnect error:', e?.message||e); } }
-  $('#pickBtn').addEventListener('click', async ()=>{ try{ const h=await window.showDirectoryPicker(); await setSsd(h); log('selected root:', h.name);}catch{ log('picker canceled'); } });
-  $('#reconnectBtn').addEventListener('click', ()=>reconnectSsd(true));
-  window.addEventListener('DOMContentLoaded', ()=>{ reconnectSsd(false); log('Boot OK (bypass render locked)'); });
 
-  // ---- Local FS helpers ----
-  const splitPath=(p)=>String(p).split('/').filter(Boolean).filter(s=>s!=='.'&&s!=='..');
-  async function ensureDir(root,rel){ let d=root; for(const part of splitPath(rel)){ d=await d.getDirectoryHandle(part,{create:true}); } return d; }
-  async function getParent(root,rel,create){ const parts=splitPath(rel); if(!parts.length) throw new Error('empty path'); let d=root; for(let i=0;i<parts.length-1;i++){ d=await d.getDirectoryHandle(parts[i],{create}); } return {dir:d,name:parts[parts.length-1]}; }
-  async function writeFile(root,rel,content){ const {dir,name}=await getParent(root,rel,true); const fh=await dir.getFileHandle(name,{create:true}); const w=await fh.createWritable(); await w.write(content||''); await w.close(); return {path:rel,bytes:(content||'').length}; }
-  async function readFile(root,rel){ const {dir,name}=await getParent(root,rel,false); const fh=await dir.getFileHandle(name,{create:false}); const f=await fh.getFile(); return {path:rel,content:await f.text()}; }
-  async function listDir(root,rel='.') { const dir=rel==='.'?root:await ensureDir(root,rel); const items=[]; for await (const [name,handle] of dir.entries()){ const item={name,is_dir:handle.kind==='directory'}; if(handle.kind==='file'){ const f=await handle.getFile(); item.size=f.size; } items.push(item);} return {path:rel,items}; }
-  async function deleteFile(root,rel){ const {dir,name}=await getParent(root,rel,false); await dir.removeEntry(name,{recursive:false}); return {path:rel,deleted:true}; }
-  async function readIfExists(root,rel){ try{ return await readFile(root,rel); }catch{ return {path:rel,content:''}; } }
-  async function appendText(root,rel,text,ensureSep){ const cur=(await readIfExists(root,rel)).content||''; const sep = cur && ensureSep && !cur.endsWith('\n') ? '\n' : ''; return await writeFile(root,rel,cur+sep+(text||'')); }
-  async function appendJsonArray(root,rel,obj){ let cur=''; try{ cur=(await readFile(root,rel)).content; }catch{} let arr=[]; try{ arr=cur?JSON.parse(cur):[]; if(!Array.isArray(arr)) throw 0; }catch{ arr=[]; } arr.push(obj); const pretty=JSON.stringify(arr,null,2)+'\n'; return await writeFile(root,rel,pretty); }
-  async function appendJsonl(root,rel,obj){ const line=JSON.stringify(obj)+'\n'; return await appendText(root,rel,line,false); }
+// ---- Permission banner & reconnect ----
+function showPermBanner(){ if(document.getElementById('permBanner')) return; const b=document.createElement('div'); b.id='permBanner'; b.innerHTML='<span>HAL needs SSD access to <b>GENESIS</b>.</span> <button id="grantSsd">Grant SSD Access</button>'; document.body.appendChild(b); document.getElementById('grantSsd').onclick=()=>reconnectSsd(true); }
+function hidePermBanner(){ const b=document.getElementById('permBanner'); if(b) b.remove(); }
 
-  // ---- GitHub (bypass only) ----
-  const ghBase='https://api.github.com';
-  const ghHdrs=(tok)=>({'Accept':'application/vnd.github+json',...(tok?{'Authorization':'Bearer '+tok}:{})});
-  const b64e=(t)=>btoa(unescape(encodeURIComponent(t)));
-  const encSeg=(p)=>String(p).split('/').map(encodeURIComponent).join('/');
-  async function ghGetFile({repo,path,ref}){ const tok=$('#ghToken').value.trim(); const url=ghBase+'/repos/'+repo+'/contents/'+encSeg(path)+(ref?'?ref='+encodeURIComponent(ref):''); const r=await fetch(url,{headers:ghHdrs(tok)}); if(!r.ok) throw new Error('github GET '+r.status); const j=await r.json(); return j; }
-  async function ghPutFile({repo,path,content,message,branch}){ const tok=$('#ghToken').value.trim(); const url=ghBase+'/repos/'+repo+'/contents/'+encSeg(path); let sha; try{ const cur=await fetch(url+(branch?'?ref='+encodeURIComponent(branch):''),{headers:ghHdrs(tok)}); if(cur.ok){ const j=await cur.json(); sha=j.sha; } }catch{} const body={message:message||('update '+path), content:b64e(content||''), branch:branch||$('#ghBranch').value.trim()||'main', sha}; const r=await fetch(url,{method:'PUT',headers:Object.assign({'Content-Type':'application/json'},ghHdrs(tok)), body:JSON.stringify(body)}); if(!r.ok) throw new Error('github PUT '+r.status); return await r.json(); }
 
-  // ---- Command processing ----
-  function extractBlock(t){ const s=t.indexOf('[KEV_AI::command]'); const e=t.indexOf('[/KEV_AI::command]'); return (s!==-1&&e!==-1&&e>s)? t.slice(s+17,e).trim() : t.trim(); }
-  function normalize(p){
-    if(!p.op && p.action) p.op=p.action;
-    if(!p.args){ p.args={}; if(p.path) p.args.path=p.path; if(p.mode) p.args.mode=p.mode; if(p.content!==undefined) p.args.content=p.content; if(p.data!==undefined){ if(typeof p.data==='object') p.args.json=p.data; else p.args.content=String(p.data);} }
-    if(!p.target) p.target='local';
-    return p;
-  }
-  async function processOnce(){
-    try{
-      const rawAll=$('#cmdInput').value; const raw=extractBlock(rawAll); const parsed=normalize(JSON.parse(raw));
-      const id=parsed.id||Math.random().toString(36).slice(2); const target=String(parsed.target||'local').toLowerCase(); const op=String(parsed.op||'').toLowerCase(); const a=parsed.args||{};
+// ---- Clipboard watcher (optional) ----
+let watchTimer=null; $('#watchClipboard').addEventListener('click', async (e)=>{ if(watchTimer){ clearInterval(watchTimer); watchTimer=null; e.target.textContent='Watch Clipboard'; return;} try{ await navigator.permissions.query({name:'clipboard-read'});}catch{} e.target.textContent='Watching…'; let last=''; watchTimer=setInterval(async()=>{ try{ const t=await navigator.clipboard.readText(); if(t && t!==last && t.includes('[KEV_AI::command]')){ last=t; $('#cmdInput').value=t; log('clipboard captured block'); await processOnce(); } }catch{} },1200); });
 
-      // Local path
-      if(target==='local'){
-        if(!ssdRoot){ log('local: no SSD selected'); showPermBanner(); }
-        else {
-          if(op==='file_ops.read_file'||op==='read_file'){ log('local read:', await readFile(ssdRoot,a.path)); }
-          else if(op==='file_ops.write_file'||op==='write_file'){ log('local write:', await writeFile(ssdRoot,a.path,a.content||'')); }
-          else if(op==='file_ops.list_dir'||op==='list_dir'){ log('local list:', await listDir(ssdRoot,a.path||'.')); }
-          else if(op==='file_ops.mkdirs'||op==='mkdirs'){ await ensureDir(ssdRoot,a.path); log('local mkdirs ok:', a.path); }
-          else if(op==='file_ops.delete_file'||op==='delete_file'){ log('local delete:', await deleteFile(ssdRoot,a.path)); }
-          else if(op==='file_ops.append_file'||op==='append_file'){
-            const mode=String(a.mode||'text').toLowerCase();
-            if(mode==='json-array'){ const obj=a.json ?? (a.content?JSON.parse(a.content):{}); log('local append (json-array):', await appendJsonArray(ssdRoot,a.path,obj)); }
-            else if(mode==='jsonl'){ const obj=a.json ?? (a.content?JSON.parse(a.content):{}); log('local append (jsonl):', await appendJsonl(ssdRoot,a.path,obj)); }
-            else { const ensure = a.ensureNewline!==false; log('local append (text):', await appendText(ssdRoot,a.path,a.content||'',ensure)); }
-          }
-          else { log('local unknown op:', op); }
-        }
-      }
 
-      // GitHub (bypass forced ON)
-      if(target==='render' || op.startsWith('github.')){
-        if(!op.startsWith('github.')){ log('render disabled (bypass ON): op not github.* ->', op); }
-        else {
-          const repo=a.repo||$('#ghRepo').value.trim();
-          if(op==='github.get_file'){ const out=await ghGetFile({repo,path:a.path,ref:a.ref||$('#ghBranch').value.trim()}); log('github get_file:', {path:a.path, sha:out.sha, size:out.size}); }
-          else if(op==='github.put_file'){ const out=await ghPutFile({repo,path:a.path,content:a.content||'',message:a.message||'',branch:a.branch||$('#ghBranch').value.trim()}); log('github put_file:', {path:a.path, commit:(out&&out.commit&&out.commit.sha?out.commit.sha.slice(0,7):'')}); }
-          else { log('github op not supported:', op); }
-        }
-      }
-
-      if($('#autoClear').value==='1') $('#cmdInput').value='';
-    }catch(e){ log('error:', e?.message||e); }
-  }
-  $('#runOnce').addEventListener('click', processOnce);
-  $('#clearLog').addEventListener('click', ()=>{ $('#log').textContent=''; });
-
-  // ---- Clipboard watcher (optional) ----
-  let watchTimer=null; $('#watchClipboard').addEventListener('click', async (e)=>{ if(watchTimer){ clearInterval(watchTimer); watchTimer=null; e.target.textContent='Watch Clipboard'; return;} try{ await navigator.permissions.query({name:'clipboard-read'});}catch{} e.target.textContent='Watching…'; let last=''; watchTimer=setInterval(async()=>{ try{ const t=await navigator.clipboard.readText(); if(t && t!==last && t.includes('[KEV_AI::command]')){ last=t; $('#cmdInput').value=t; log('clipboard captured block'); await processOnce(); } }catch{} },1200); });
-
-  // ---- Auto-exec queue from extension/bookmarklet ----
-  (function(){ const Q=[]; let busy=false; async function run(raw){ $('#cmdInput').value='[KEV_AI::command]\n'+raw+'\n[/KEV_AI::command]'; await processOnce(); } async function pump(){ if(busy) return; busy=true; try{ while(Q.length){ await run(Q.shift()); } } finally { busy=false; } } window.addEventListener('message',(ev)=>{ const d=ev.data||{}; if(d.type==='HAL_PAYLOAD' && typeof d.raw==='string'){ Q.push(d.raw); pump(); } if(d.type==='HAL_CONTROL' && d.cmd==='settings' && d.settings){ try{ const s=d.settings; if(s.ghToken!==undefined){ $('#ghToken').value=s.ghToken; } if(s.ghRepo){ $('#ghRepo').value=s.ghRepo; } if(s.ghBranch){ $('#ghBranch').value=s.ghBranch; } const rs=$('#rememberSettings'); if(rs&&!rs.checked){ rs.checked=true; } maybeSave(); }catch{} } if(d.type==='HAL_CONTROL' && d.cmd==='reconnect'){ reconnectSsd(false); } }); })();
+// ---- Auto-exec queue from extension/bookmarklet ----
+(function(){ const Q=[]; let busy=false; async function run(raw){ $('#cmdInput').value='[KEV_AI::command]\n'+raw+'\n[/KEV_AI::command]'; await processOnce(); } async function pump(){ if(busy) return; busy=true; try{ while(Q.length){ await run(Q.shift()); } } finally { busy=false; } } window.addEventListener('message',(ev)=>{ const d=ev.data||{}; if(d.type==='HAL_PAYLOAD' && typeof d.raw==='string'){ Q.push(d.raw); pump(); } if(d.type==='HAL_CONTROL' && d.cmd==='settings' && d.settings){ try{ const s=d.settings; if(s.ghToken!==undefined){ $('#ghToken').value=s.ghToken; } if(s.ghRepo){ $('#ghRepo').value=s.ghRepo; } if(s.ghBranch){ $('#ghBranch').value=s.ghBranch; } const rs=$('#rememberSettings'); if(rs&&!rs.checked){ rs.checked=true; } maybeSave(); }catch{} } if(d.type==='HAL_CONTROL' && d.cmd==='reconnect'){ reconnectSsd(false); } if(d.type==='HAL_CONTROL' && d.cmd==='scheduler'){ if(d.settings && d.settings.enabled){ startScheduler(d.settings.interval_mins||30); $('#schedEnable').checked=true; $('#schedEvery').value=String(d.settings.interval_mins||30);} else { stopScheduler(); $('#schedEnable').checked=false; } maybeSave(); } if(d.type==='HAL_CONTROL' && d.cmd==='checkpoint_now'){ checkpointNow(); } }); })();
 })();
 </script>
 </body>
