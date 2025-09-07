@@ -4,8 +4,8 @@
   // ---------- Tiny helpers ----------
   function $(id){ return document.getElementById(id); }
   function toStr(v){ try{ return typeof v==='string'? v : JSON.stringify(v,null,2); }catch(e){ return String(v); } }
-  function log(){ var out=[]; for(var i=0;i<arguments.length;i++){ out.push(toStr(arguments[i])); } var el=$('log'); el.textContent += (el.textContent?"
-":"") + out.join(' '); el.scrollTop = el.scrollHeight; }
+  function log(){ var out=[]; for(var i=0;i<arguments.length;i++){ out.push(toStr(arguments[i])); } var el=$('log'); el.textContent += (el.textContent?'
+':'') + out.join(' '); el.scrollTop = el.scrollHeight; }
 
   // ---------- Settings ----------
   var LS_KEY='hal-web-relay-settings';
@@ -68,7 +68,6 @@
     log('Boot OK (GitHub-only, GENESIS auto-detect)');
     reconnectSsd(false);
     if($('schedEnable').checked){ startScheduler($('schedEvery').value); }
-    // one-shot: first user click anywhere will try to reconnect with activation
     var once=false; document.addEventListener('pointerdown', function(){ if(!once){ once=true; reconnectSsd(true); }}, {once:true});
   });
 
