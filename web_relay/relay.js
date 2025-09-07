@@ -1,16 +1,11 @@
-/* HAL Web Relay JS (v20.3). ASCII-only, no template literals, no Unicode punctuation. */
 (function(){
   'use strict';
 
   // ---------- Tiny helpers ----------
   function $(id){ return document.getElementById(id); }
   function toStr(v){ try{ return typeof v==='string'? v : JSON.stringify(v,null,2); }catch(e){ return String(v); } }
-  function log(){
-    var out=[]; for(var i=0;i<arguments.length;i++){ out.push(toStr(arguments[i])); }
-    var el=$('log'); el.textContent += (el.textContent?"
-":"") + out.join(' ');
-    el.scrollTop = el.scrollHeight;
-  }
+  function log(){ var out=[]; for(var i=0;i<arguments.length;i++){ out.push(toStr(arguments[i])); } var el=$('log'); el.textContent += (el.textContent?"
+":"") + out.join(' '); el.scrollTop = el.scrollHeight; }
 
   // ---------- Settings ----------
   var LS_KEY='hal-web-relay-settings';
@@ -21,8 +16,7 @@
 
   $('ghToken').value=S.ghToken; $('ghRepo').value=S.ghRepo; $('ghBranch').value=S.ghBranch;
   $('rememberSettings').checked=!!S.rememberSettings; $('rememberSsd').checked=!!S.rememberSsd;
-  $('autoClear').value=S.autoClear||'1'; $('schedEnable').checked=!!S.schedEnable;
-  $('schedEvery').value=String(S.schedEvery||30);
+  $('autoClear').value=S.autoClear||'1'; $('schedEnable').checked=!!S.schedEnable; $('schedEvery').value=String(S.schedEvery||30);
   function maybeSave(){ if(!$('rememberSettings').checked) return; S.ghToken=$('ghToken').value; S.ghRepo=$('ghRepo').value.trim(); S.ghBranch=$('ghBranch').value.trim(); S.rememberSettings=$('rememberSettings').checked; S.rememberSsd=$('rememberSsd').checked; S.autoClear=$('autoClear').value; S.schedEnable=$('schedEnable').checked; S.schedEvery=parseInt($('schedEvery').value||'30',10); save(S); }
   document.addEventListener('input', function(e){ var t=e.target; if(t && (t.tagName==='INPUT'||t.tagName==='SELECT'||t.tagName==='TEXTAREA')) maybeSave(); }, true);
   document.addEventListener('change', function(e){ var t=e.target; if(t && (t.tagName==='INPUT'||t.tagName==='SELECT'||t.tagName==='TEXTAREA')) maybeSave(); }, true);
@@ -36,9 +30,8 @@
   // ---------- SSD select / auto-lock to GENESIS ----------
   var ssdRoot=null;
   function coerceGenesis(h){
-    // Try: exact GENESIS folder -> GENESIS child -> .genesis_root marker -> create marker
     return Promise.resolve().then(function(){
-      var name = (h && h.name) ? h.name.toUpperCase() : '';
+      var name=(h&&h.name)?h.name.toUpperCase():'';
       if(name==='GENESIS') return h;
       return h.getDirectoryHandle('GENESIS',{create:false}).then(function(d){ return d; }).catch(function(){
         return h.getFileHandle('.genesis_root',{create:false}).then(function(){ return h; }).catch(function(){
@@ -53,9 +46,11 @@
   function hidePermBanner(){ var b=document.getElementById('permBanner'); if(b) b.parentNode.removeChild(b); }
 
   function reconnectSsd(userActivation){
-    return getHandle('ssdRoot').then(function(h){ if(!h){ log('no saved SSD handle - click Choose Folder and pick drive root or GENESIS folder'); showPermBanner(); return; }
+    return getHandle('ssdRoot').then(function(h){
+      if(!h){ log('no saved SSD handle - click Choose Folder, drag GENESIS here, or pick drive root'); showPermBanner(); return; }
       return h.queryPermission({mode:'readwrite'}).then(function(p){ if(p!=='granted'){ if(userActivation){ return h.requestPermission({mode:'readwrite'}); } else { showPermBanner(); throw new Error('permission not granted yet'); } } return 'granted'; })
-      .then(function(){ return setSsd(h); }).then(function(){ log('SSD reconnected'); hidePermBanner(); })
+      .then(function(){ return setSsd(h); })
+      .then(function(){ log('SSD reconnected'); hidePermBanner(); })
       .catch(function(e){ log('reconnect error:', (e&&e.message)?e.message:String(e)); });
     });
   }
@@ -69,7 +64,13 @@
   });
   $('reconnectBtn').addEventListener('click', function(){ log('reconnect: requesting permission...'); reconnectSsd(true); });
 
-  window.addEventListener('DOMContentLoaded', function(){ log('Boot OK (GitHub-only, GENESIS auto-detect)'); reconnectSsd(false); if($('schedEnable').checked){ startScheduler($('schedEvery').value); } });
+  window.addEventListener('DOMContentLoaded', function(){
+    log('Boot OK (GitHub-only, GENESIS auto-detect)');
+    reconnectSsd(false);
+    if($('schedEnable').checked){ startScheduler($('schedEvery').value); }
+    // one-shot: first user click anywhere will try to reconnect with activation
+    var once=false; document.addEventListener('pointerdown', function(){ if(!once){ once=true; reconnectSsd(true); }}, {once:true});
+  });
 
   // ---------- Local FS ops ----------
   function splitPath(p){ return String(p).split('/').filter(function(s){ return s && s!=='.' && s!=='..'; }); }
@@ -119,4 +120,27 @@ $/.test(cur))?'
   (function(){ var Q=[]; var busy=false; function run(raw){ $('cmdInput').value='[KEV_AI::command]
 '+raw+'
 [/KEV_AI::command]'; processOnce(); return Promise.resolve(); } function pump(){ if(busy) return; busy=true; (function next(){ if(!Q.length){ busy=false; return; } var r=Q.shift(); run(r).then(next); })(); } window.addEventListener('message', function(ev){ var d=ev.data||{}; if(d.type==='HAL_PAYLOAD' && typeof d.raw==='string'){ Q.push(d.raw); pump(); } if(d.type==='HAL_CONTROL' && d.cmd==='settings' && d.settings){ try{ var s=d.settings; if(typeof s.ghToken!=='undefined'){ $('ghToken').value=s.ghToken; } if(s.ghRepo){ $('ghRepo').value=s.ghRepo; } if(s.ghBranch){ $('ghBranch').value=s.ghBranch; } var rs=$('rememberSettings'); if(rs&&!rs.checked){ rs.checked=true; } maybeSave(); }catch(e){} } if(d.type==='HAL_CONTROL' && d.cmd==='reconnect'){ reconnectSsd(false); } if(d.type==='HAL_CONTROL' && d.cmd==='scheduler'){ if(d.settings && d.settings.enabled){ startScheduler(d.settings.interval_mins||30); $('schedEnable').checked=true; $('schedEvery').value=String(d.settings.interval_mins||30); } else { stopScheduler(); $('schedEnable').checked=false; } maybeSave(); } if(d.type==='HAL_CONTROL' && d.cmd==='checkpoint_now'){ checkpointNow(); } }); })();
+
+  // ---------- Drag & drop a GENESIS folder to grant access ----------
+  document.addEventListener('dragover', function(e){ e.preventDefault(); });
+  document.addEventListener('drop', function(e){
+    try{
+      e.preventDefault();
+      var items=e.dataTransfer && e.dataTransfer.items ? e.dataTransfer.items : [];
+      for(var i=0;i<items.length;i++){
+        var it=items[i];
+        if(it.kind==='file'){
+          var getter = it.getAsFileSystemHandle || it.webkitGetAsEntry;
+          if(getter){
+            Promise.resolve(getter.call(it)).then(function(h){
+              if(h && h.kind==='directory'){ setSsd(h).then(function(){ log('selected root set (drop)'); }); }
+              else if(h && h.isDirectory && h.createReader){ log('drop: legacy entry not handled'); }
+            }).catch(function(err){ log('drop error:', (err&&err.message)?err.message:String(err)); });
+            return;
+          }
+        }
+      }
+      log('drop: no directory item found');
+    }catch(err){ log('drop error:', (err&&err.message)?err.message:String(err)); }
+  });
 })();
