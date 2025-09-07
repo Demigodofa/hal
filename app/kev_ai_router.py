@@ -3,8 +3,8 @@ from pydantic import BaseModel
 import re
 import json
 
-# Import your existing ops
-from app.services import github_ops, file_ops, memory_ops
+# Import directly from app (not app.services)
+from . import github_ops, file_ops, memory_ops
 
 router = APIRouter()
 
@@ -62,3 +62,4 @@ async def kev_ai_listener(req: CommandRequest):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
