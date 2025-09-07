@@ -1,77 +1,234 @@
-(function(){
-<p class="muted">Local shell is not available in the browser. Use GitHub ops or a server for that.</p>
-</div>
-</div>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>HAL Web Relay (SSD + GitHub, auto-exec)</title>
+  <style>
+    body{font-family:system-ui,Segoe UI,Roboto,Arial;margin:0;background:#f8fafc;color:#0f172a}
+    .wrap{max-width:980px;margin:24px auto;padding:0 16px}
+    .card{background:#fff;border-radius:16px;box-shadow:0 6px 18px rgba(0,0,0,.06);padding:16px}
+    h1{margin:0 0 8px;font-size:22px}
+    label{display:block;margin:8px 0 4px;font-size:12px;color:#475569}
+    input,textarea,select,button{font:inherit}
+    input,textarea,select{width:100%;box-sizing:border-box;border:1px solid #e5e7eb;border-radius:10px;padding:10px 12px;background:#fff}
+    textarea{min-height:160px;resize:vertical}
+    .row{display:flex;gap:12px;align-items:flex-end}
+    .row>.col{flex:1}
+    .btn{padding:10px 14px;border:none;border-radius:12px;background:#111827;color:#fff;cursor:pointer}
+    .btn.alt{background:#334155}
+    .btn.ok{background:#16a34a}
+    .log{font-family:ui-monospace,Consolas,Menlo,monospace;background:#0b1020;color:#e5e7eb;border-radius:12px;padding:12px;height:300px;overflow:auto;white-space:pre-wrap}
+    .muted{color:#64748b;font-size:12px}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>HAL Web Relay</h1>
+      <p class="muted">Choose <b>GENESIS</b> once; this page can remember it. HAL’s blocks arrive via the extension/bookmarklet and run automatically.</p>
 
+      <div class="grid">
+        <div class="card" style="padding:12px">
+          <h3 style="margin:0 0 8px">Local SSD</h3>
+          <div class="row">
+            <div class="col">
+              <label>SSD root</label>
+              <input id="ssdLabel" placeholder="Not selected" disabled />
+            </div>
+            <div><button class="btn" id="pickBtn">Choose Folder</button></div>
+            <div><button class="btn alt" id="reconnectBtn" title="Try previously saved handle">Reconnect</button></div>
+          </div>
+          <label><input type="checkbox" id="rememberSsd"> Remember SSD selection (IndexedDB)</label>
+        </div>
 
-<script>
-const $ = (s)=>document.querySelector(s);
-const log = (...a)=>{ const t=a.map(x=>typeof x==='string'?x:JSON.stringify(x,null,2)).join(' '); const el=$('#log'); el.textContent += (el.textContent? '
-':'') + t; el.scrollTop=el.scrollHeight; };
+        <div class="card" style="padding:12px">
+          <h3 style="margin:0 0 8px">Remote (optional)</h3>
+          <label><input type="checkbox" id="bypassRender"> Bypass Render (GitHub API directly)</label>
+          <div class="row">
+            <div class="col">
+              <label>GitHub Token (repo read/write)</label>
+              <input id="ghToken" type="password" placeholder="fine-grained token" />
+            </div>
+            <div class="col">
+              <label>Repo</label>
+              <input id="ghRepo" value="Demigodofa/hal" />
+            </div>
+          </div>
+          <div class="row">
+            <div class="col">
+              <label>Branch</label>
+              <input id="ghBranch" value="main" />
+            </div>
+            <div class="col">
+              <label>Render Listener URL</label>
+              <input id="renderUrl" value="https://hal-ku4c.onrender.com/kev_ai/listener"/>
+            </div>
+          </div>
+          <div class="row">
+            <div class="col">
+              <label>Shared Secret (Render HMAC, optional)</label>
+              <input id="sharedSecret" type="password" placeholder="match Render secret if set"/>
+            </div>
+            <div>
+              <label>Mode</label>
+              <select id="routeMode">
+                <option value="auto" selected>auto</option>
+                <option value="local">local</option>
+                <option value="render">render</option>
+                <option value="both">both</option>
+              </select>
+            </div>
+          </div>
+          <label><input type="checkbox" id="rememberSettings" checked> Remember settings (localStorage)</label>
+        </div>
+      </div>
 
+      <label style="margin-top:10px">Command block or JSON</label>
+      <textarea id="cmdInput" spellcheck="false" placeholder="Paste [KEV_AI::command]... or raw JSON here"></textarea>
+      <div class="row" style="margin-top:8px">
+        <div class="col">
+          <button class="btn ok" id="runOnce">Process Once</button>
+          <button class="btn alt" id="clearLog">Clear Log</button>
+          <button class="btn" id="watchClipboard">Watch Clipboard</button>
+        </div>
+      </div>
 
-// ----- Settings persistence -----
-const LS_KEY = 'hal-web-relay-settings';
-const load = () => { try { return JSON.parse(localStorage.getItem(LS_KEY) || '{}'); } catch { return {}; } };
-const save = (o) => localStorage.setItem(LS_KEY, JSON.stringify(o));
-const S = Object.assign({ renderUrl:'https://hal-ku4c.onrender.com/kev_ai/listener', sharedSecret:'', routeMode:'auto', bypassRender:false, ghToken:'', ghRepo:'Demigodofa/hal', ghBranch:'main', rememberSettings:true, rememberSsd:false }, load());
-$('#renderUrl').value = S.renderUrl; $('#sharedSecret').value = S.sharedSecret; $('#routeMode').value = S.routeMode; $('#bypassRender').checked = !!S.bypassRender; $('#ghToken').value = S.ghToken || ''; $('#ghRepo').value = S.ghRepo; $('#ghBranch').value = S.ghBranch; $('#rememberSettings').checked = !!S.rememberSettings; $('#rememberSsd').checked = !!S.rememberSsd;
-function maybeSave(){ if(!$('#rememberSettings').checked) return; S.renderUrl=$('#renderUrl').value.trim(); S.sharedSecret=$('#sharedSecret').value.trim(); S.routeMode=$('#routeMode').value; S.bypassRender=$('#bypassRender').checked; S.ghToken=$('#ghToken').value; S.ghRepo=$('#ghRepo').value.trim(); S.ghBranch=$('#ghBranch').value.trim(); S.rememberSettings=$('#rememberSettings').checked; S.rememberSsd=$('#rememberSsd').checked; save(S);} ['input','change'].forEach(ev=>document.body.addEventListener(ev,e=>{ if(['INPUT','SELECT','TEXTAREA'].includes(e.target.tagName)) maybeSave(); }));
+      <label style="margin-top:12px">Log</label>
+      <div class="log" id="log"></div>
+      <p class="muted">Browser can’t run local shell; for that use a server. All file ops here are local or GitHub.</p>
+    </div>
+  </div>
 
+  <script>
+    const $ = (s)=>document.querySelector(s);
+    const log = (...a)=>{ const t=a.map(x=>typeof x==='string'?x:JSON.stringify(x,null,2)).join(' '); const el=$('#log'); el.textContent += (el.textContent? '\n':'') + t; el.scrollTop=el.scrollHeight; };
 
-// ----- SSD persistence via IndexedDB -----
-let ssdRoot = null; const DB_NAME='hal-relay', DB_STORE='handles';
-function idb(){ return new Promise((res,rej)=>{ const r=indexedDB.open(DB_NAME,1); r.onupgradeneeded=()=>{ r.result.createObjectStore(DB_STORE); }; r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); }); }
-async function putHandle(key, handle){ const db=await idb(); return new Promise((res,rej)=>{ const tx=db.transaction(DB_STORE,'readwrite'); tx.objectStore(DB_STORE).put(handle,key); tx.oncomplete=()=>res(); tx.onerror=()=>rej(tx.error); }); }
-async function getHandle(key){ const db=await idb(); return new Promise((res,rej)=>{ const tx=db.transaction(DB_STORE,'readonly'); const req=tx.objectStore(DB_STORE).get(key); req.onsuccess=()=>res(req.result); req.onerror=()=>rej(req.error); }); }
-async function setSsd(handle){ ssdRoot = handle || null; $('#ssdLabel').value = ssdRoot ? (ssdRoot.name || '(selected)') : ''; if (ssdRoot && $('#rememberSsd').checked){ try{ await putHandle('ssdRoot', ssdRoot);}catch{}} }
-async function reconnectSsd(){ try{ const h=await getHandle('ssdRoot'); if(!h){ log('no saved SSD handle'); return; } let perm=await h.queryPermission({mode:'readwrite'}); if(perm!=='granted'){ perm=await h.requestPermission({mode:'readwrite'});} if(perm==='granted'){ await setSsd(h); log('SSD reconnected:', h.name);} else { log('SSD permission denied'); } }catch(e){ log('reconnect error:', e.message||e);} }
-$('#pickBtn').addEventListener('click', async ()=>{ try{ const h=await window.showDirectoryPicker(); await setSsd(h); log('selected root:', h.name);}catch(e){ log('picker canceled'); } });
-$('#reconnectBtn').addEventListener('click', reconnectSsd);
-window.addEventListener('DOMContentLoaded', ()=>{ if($('#rememberSsd').checked) reconnectSsd(); });
+    /* settings persistence */
+    const LS_KEY='hal-web-relay-settings';
+    const load=()=>{ try{return JSON.parse(localStorage.getItem(LS_KEY)||'{}');}catch{return{};} };
+    const save=(o)=>localStorage.setItem(LS_KEY,JSON.stringify(o));
+    const S=Object.assign({renderUrl:'https://hal-ku4c.onrender.com/kev_ai/listener',sharedSecret:'',routeMode:'auto',bypassRender:false,ghToken:'',ghRepo:'Demigodofa/hal',ghBranch:'main',rememberSettings:true,rememberSsd:false},load());
+    $('#renderUrl').value=S.renderUrl; $('#sharedSecret').value=S.sharedSecret; $('#routeMode').value=S.routeMode; $('#bypassRender').checked=!!S.bypassRender; $('#ghToken').value=S.ghToken||''; $('#ghRepo').value=S.ghRepo; $('#ghBranch').value=S.ghBranch; $('#rememberSettings').checked=!!S.rememberSettings; $('#rememberSsd').checked=!!S.rememberSsd;
+    function maybeSave(){ if(!$('#rememberSettings').checked) return; S.renderUrl=$('#renderUrl').value.trim(); S.sharedSecret=$('#sharedSecret').value.trim(); S.routeMode=$('#routeMode').value; S.bypassRender=$('#bypassRender').checked; S.ghToken=$('#ghToken').value; S.ghRepo=$('#ghRepo').value.trim(); S.ghBranch=$('#ghBranch').value.trim(); S.rememberSettings=$('#rememberSettings').checked; S.rememberSsd=$('#rememberSsd').checked; save(S); }
+    ['input','change'].forEach(ev=>document.body.addEventListener(ev,e=>{ if(['INPUT','SELECT','TEXTAREA'].includes(e.target.tagName)) maybeSave(); }));
 
+    /* SSD persistence via IndexedDB */
+    let ssdRoot=null; const DB_NAME='hal-relay', DB_STORE='handles';
+    function idb(){ return new Promise((res,rej)=>{ const r=indexedDB.open(DB_NAME,1); r.onupgradeneeded=()=>{ r.result.createObjectStore(DB_STORE); }; r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); }); }
+    async function putHandle(k,h){ const db=await idb(); return new Promise((res,rej)=>{ const tx=db.transaction(DB_STORE,'readwrite'); tx.objectStore(DB_STORE).put(h,k); tx.oncomplete=()=>res(); tx.onerror=()=>rej(tx.error); }); }
+    async function getHandle(k){ const db=await idb(); return new Promise((res,rej)=>{ const tx=db.transaction(DB_STORE,'readonly'); const q=tx.objectStore(DB_STORE).get(k); q.onsuccess=()=>res(q.result); q.onerror=()=>rej(q.error); }); }
+    async function setSsd(h){ ssdRoot=h||null; $('#ssdLabel').value=ssdRoot?(ssdRoot.name||'(selected)'):''; if(ssdRoot&&$('#rememberSsd').checked){ try{ await putHandle('ssdRoot',ssdRoot);}catch{} } }
+    async function reconnectSsd(){ try{ const h=await getHandle('ssdRoot'); if(!h){ log('no saved SSD handle'); return; } let p=await h.queryPermission({mode:'readwrite'}); if(p!=='granted'){ p=await h.requestPermission({mode:'readwrite'});} if(p==='granted'){ await setSsd(h); log('SSD reconnected:',h.name);} else { log('SSD permission denied'); } }catch(e){ log('reconnect error:',e.message||e); } }
+    $('#pickBtn').addEventListener('click',async()=>{ try{ const h=await window.showDirectoryPicker(); await setSsd(h); log('selected root:',h.name);}catch(e){ log('picker canceled'); } });
+    $('#reconnectBtn').addEventListener('click',reconnectSsd);
+    window.addEventListener('DOMContentLoaded',()=>{ if($('#rememberSsd').checked) reconnectSsd(); });
 
-// ----- Local FS helpers -----
-const splitPath = (p)=> String(p).split('/').filter(Boolean).filter(s=>s!=='.'&&s!=='..');
-async function ensureDir(root, rel){ let d=root; for(const part of splitPath(rel)){ d=await d.getDirectoryHandle(part,{create:true}); } return d; }
-async function getParent(root, rel, create){ const parts=splitPath(rel); if(!parts.length) throw new Error('empty path'); let d=root; for(let i=0;i<parts.length-1;i++){ d=await d.getDirectoryHandle(parts[i],{create}); } return {dir:d,name:parts[parts.length-1]}; }
-async function writeFile(root, rel, content){ const {dir,name}=await getParent(root,rel,true); const fh=await dir.getFileHandle(name,{create:true}); const w=await fh.createWritable(); await w.write(content||''); await w.close(); return {path:rel,bytes:(content||'').length}; }
-async function readFile(root, rel){ const {dir,name}=await getParent(root,rel,false); const fh=await dir.getFileHandle(name,{create:false}); const f=await fh.getFile(); return {path:rel, content: await f.text()}; }
-async function listDir(root, rel='.') { const dir = rel==='.'? root : await ensureDir(root, rel); const items=[]; for await (const [name,handle] of dir.entries()){ const item={name,is_dir:handle.kind==='directory'}; if(handle.kind==='file'){ const f=await handle.getFile(); item.size=f.size; } items.push(item);} return {path:rel, items}; }
-async function deleteFile(root, rel){ const {dir,name}=await getParent(root,rel,false); await dir.removeEntry(name,{recursive:false}); return {path:rel,deleted:true}; }
+    /* Local FS helpers */
+    const splitPath=(p)=>String(p).split('/').filter(Boolean).filter(s=>s!=='.'&&s!=='..');
+    async function ensureDir(root,rel){ let d=root; for(const part of splitPath(rel)){ d=await d.getDirectoryHandle(part,{create:true}); } return d; }
+    async function getParent(root,rel,create){ const parts=splitPath(rel); if(!parts.length) throw new Error('empty path'); let d=root; for(let i=0;i<parts.length-1;i++){ d=await d.getDirectoryHandle(parts[i],{create}); } return {dir:d,name:parts[parts.length-1]}; }
+    async function writeFile(root,rel,content){ const {dir,name}=await getParent(root,rel,true); const fh=await dir.getFileHandle(name,{create:true}); const w=await fh.createWritable(); await w.write(content||''); await w.close(); return {path:rel,bytes:(content||'').length}; }
+    async function readFile(root,rel){ const {dir,name}=await getParent(root,rel,false); const fh=await dir.getFileHandle(name,{create:false}); const f=await fh.getFile(); return {path:rel,content:await f.text()}; }
+    async function listDir(root,rel='.'){ const dir=rel==='.'?root:await ensureDir(root,rel); const items=[]; for await (const [name,handle] of dir.entries()){ const item={name,is_dir:handle.kind==='directory'}; if(handle.kind==='file'){ const f=await handle.getFile(); item.size=f.size; } items.push(item);} return {path:rel,items}; }
+    async function deleteFile(root,rel){ const {dir,name}=await getParent(root,rel,false); await dir.removeEntry(name,{recursive:false}); return {path:rel,deleted:true}; }
 
+    /* Clipboard watcher (optional convenience) */
+    let watchTimer=null;
+    $('#watchClipboard').addEventListener('click', async (e)=>{
+      if(watchTimer){ clearInterval(watchTimer); watchTimer=null; e.target.textContent='Watch Clipboard'; return; }
+      try{ await navigator.permissions.query({name:'clipboard-read'});}catch{}
+      e.target.textContent='Watching…';
+      let last='';
+      watchTimer=setInterval(async()=>{
+        try{
+          const t=await navigator.clipboard.readText();
+          if(t && t!==last && t.includes('[KEV_AI::command]')){
+            last=t; $('#cmdInput').value=t; log('clipboard captured block'); await processOnce();
+          }
+        }catch{}
+      },1500);
+    });
 
-// ----- Bookmarklet & clipboard (still available) -----
-let watchTimer=null; $('#watchClipboard').addEventListener('click', async (e)=>{ if(watchTimer){ clearInterval(watchTimer); watchTimer=null; e.target.textContent='Watch Clipboard'; return;} try{ await navigator.permissions.query({name:'clipboard-read'});}catch{} e.target.textContent='Watching…'; let last=''; watchTimer=setInterval(async()=>{ try{ const t=await navigator.clipboard.readText(); if(t && t!==last && t.includes('[KEV_AI::command]')){ last=t; $('#cmdInput').value=t; log('clipboard captured block'); await processOnce(); } }catch{} },1500); });
+    /* Render/HMAC */
+    async function hmacSHA256(key,msg){ if(!key) return; const enc=new TextEncoder(); const k=await crypto.subtle.importKey('raw',enc.encode(key),{name:'HMAC',hash:'SHA-256'},false,['sign']); const sig=await crypto.subtle.sign('HMAC',k,enc.encode(msg)); return Array.from(new Uint8Array(sig)).map(b=>b.toString(16).padStart(2,'0')).join(''); }
+    async function postRender(url,secret,body){ const sig=secret?await hmacSHA256(secret,body.raw):undefined; const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json',...(sig?{'X-KEV-Signature':sig}:{})},body:JSON.stringify(body)}); const j=await r.json().catch(()=>({})); return {ok:r.ok,status:r.status,json:j}; }
 
+    /* GitHub bypass */
+    const ghBase='https://api.github.com';
+    const ghHdrs=(tok)=>({'Accept':'application/vnd.github+json',...(tok?{'Authorization':`Bearer ${tok}`}:{})});
+    const b64e=(t)=>btoa(unescape(encodeURIComponent(t)));
+    const b64d=(b)=>decodeURIComponent(escape(atob(b)));
+    const encSeg=(p)=>String(p).split('/').map(encodeURIComponent).join('/');
+    async function ghGetFile({repo,path,ref}){ const tok=$('#bypassRender').checked?$('#ghToken').value.trim():''; const url=`${ghBase}/repos/${repo}/contents/${encSeg(path)}${ref?`?ref=${encodeURIComponent(ref)}`:''}`; const r=await fetch(url,{headers:ghHdrs(tok)}); if(!r.ok) throw new Error(`github GET ${r.status}`); const j=await r.json(); if(j&&j.content&&j.encoding==='base64'){ j.text=b64d(j.content.replace(/\n/g,'')); } return j; }
+    async function ghPutFile({repo,path,content,message,branch}){ const tok=$('#bypassRender').checked?$('#ghToken').value.trim():''; const url=`${ghBase}/repos/${repo}/contents/${encSeg(path)}`; let sha; try{ const refQ=branch?`?ref=${encodeURIComponent(branch)}`:''; const cur=await fetch(url+refQ,{headers:ghHdrs(tok)}); if(cur.ok){ const j=await cur.json(); sha=j.sha; } }catch{} const body={message:message||`update ${path}`,content:b64e(content||''),branch:branch||$('#ghBranch').value.trim()||'main',sha}; const r=await fetch(url,{method:'PUT',headers:{...ghHdrs(tok),'Content-Type':'application/json'},body:JSON.stringify(body)}); if(!r.ok) throw new Error(`github PUT ${r.status}`); return await r.json(); }
 
-// ----- HMAC / Render path -----
-async function hmacSHA256(key, message){ if(!key) return; const enc=new TextEncoder(); const k=await crypto.subtle.importKey('raw', enc.encode(key), {name:'HMAC',hash:'SHA-256'}, false, ['sign']); const sig=await crypto.subtle.sign('HMAC', k, enc.encode(message)); return Array.from(new Uint8Array(sig)).map(b=>b.toString(16).padStart(2,'0')).join(''); }
-async function postRender(url, secret, body){ const sig=secret?await hmacSHA256(secret, body.raw):undefined; const res=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json',...(sig?{'X-KEV-Signature':sig}:{})},body:JSON.stringify(body)}); const json=await res.json().catch(()=>({})); return {ok:res.ok,status:res.status,json}; }
+    /* Command processing */
+    const extractBlock=(t)=>{ const s=t.indexOf('[KEV_AI::command]'); const e=t.indexOf('[/KEV_AI::command]'); return (s!==-1&&e!==-1&&e>s)? t.slice(s+'[KEV_AI::command]'.length,e).trim() : t.trim(); };
+    async function processOnce(){
+      try{
+        const rawAll=$('#cmdInput').value;
+        const raw=extractBlock(rawAll);
+        const parsed=JSON.parse(raw);
+        const id=parsed.id||Math.random().toString(36).slice(2);
+        const target=(parsed.target||'local').toLowerCase();
+        const mode=$('#routeMode').value;
+        const effective=mode==='auto'?target:mode;
+        const body={id,raw,parsed,source:'web-relay',ts:Date.now()};
 
+        if((effective==='local'||effective==='both')){
+          if(!ssdRoot){ log('local: no SSD selected'); }
+          else{
+            const op=(parsed.op||'').toLowerCase(); const a=parsed.args||{};
+            if(op==='file_ops.read_file'||op==='read_file'){ log('local read:', await readFile(ssdRoot,a.path)); }
+            else if(op==='file_ops.write_file'||op==='write_file'){ log('local write:', await writeFile(ssdRoot,a.path,a.content||'')); }
+            else if(op==='file_ops.list_dir'||op==='list_dir'){ log('local list:', await listDir(ssdRoot,a.path||'.')); }
+            else if(op==='file_ops.mkdirs'||op==='mkdirs'){ await ensureDir(ssdRoot,a.path); log('local mkdirs ok:',a.path); }
+            else if(op==='file_ops.delete_file'||op==='delete_file'){ log('local delete:', await deleteFile(ssdRoot,a.path)); }
+            else if(op==='system_control.run'||op==='run_cmd'){ log('local run_cmd ignored in browser'); }
+            else { log('local unknown op:', op); }
+          }
+        }
 
-// ----- GitHub (bypass) helpers -----
-const ghBase='https://api.github.com'; const ghHdrs=(tok)=>({'Accept':'application/vnd.github+json',...(tok?{'Authorization':`Bearer ${tok}`}:{})}); const b64e=(t)=>btoa(unescape(encodeURIComponent(t))); const b64d=(b)=>decodeURIComponent(escape(atob(b))); const encSeg=(p)=>String(p).split('/').map(encodeURIComponent).join('/');
-async function ghGetFile({repo, path, ref}){ const tok=$('#bypassRender').checked?$('#ghToken').value.trim():''; const url=`${ghBase}/repos/${repo}/contents/${encSeg(path)}${ref?`?ref=${encodeURIComponent(ref)}`:''}`; const r=await fetch(url,{headers:ghHdrs(tok)}); if(!r.ok) throw new Error(`github GET ${r.status}`); const j=await r.json(); if(j&&j.content&&j.encoding==='base64'){ j.text=b64d(j.content.replace(/
-/g,'')); } return j; }
-async function ghPutFile({repo, path, content, message, branch}){ const tok=$('#bypassRender').checked?$('#ghToken').value.trim():''; const url=`${ghBase}/repos/${repo}/contents/${encSeg(path)}`; let sha; try{ const refQ=branch?`?ref=${encodeURIComponent(branch)}`:''; const cur=await fetch(url+refQ,{headers:ghHdrs(tok)}); if(cur.ok){ const j=await cur.json(); sha=j.sha; } }catch{} const body={message:message||`update ${path}`, content:b64e(content||''), branch:branch||$('#ghBranch').value.trim()||'main', sha}; const r=await fetch(url,{method:'PUT',headers:{...ghHdrs(tok),'Content-Type':'application/json'},body:JSON.stringify(body)}); if(!r.ok) throw new Error(`github PUT ${r.status}`); return await r.json(); }
+        const bypass=$('#bypassRender').checked;
+        if((effective==='render'||effective==='both') || (effective==='local'&&target==='render')){
+          const op=(parsed.op||'').toLowerCase();
+          if(bypass && op.startsWith('github.')){
+            const repo=(parsed.args&&parsed.args.repo)||$('#ghRepo').value.trim();
+            if(op==='github.get_file'){ const out=await ghGetFile({repo,path:parsed.args.path,ref:parsed.args.ref||$('#ghBranch').value.trim()}); log('github get_file:',{path:parsed.args.path,size:out.size,sha:out.sha}); }
+            else if(op==='github.put_file'){ const out=await ghPutFile({repo,path:parsed.args.path,content:parsed.args.content||'',message:parsed.args.message||'',branch:parsed.args.branch||$('#ghBranch').value.trim()}); log('github put_file:',{path:parsed.args.path,commit:out?.commit?.sha?.slice(0,7)}); }
+            else { log('github op not supported in bypass mode:', op); }
+          } else {
+            const rurl=$('#renderUrl').value.trim(); const secret=$('#sharedSecret').value.trim(); const res=await postRender(rurl,secret,body); log('render response:',res.status,res.json);
+          }
+        }
+      }catch(e){ log('error:', e?.message||e); }
+    }
+    $('#runOnce').addEventListener('click',processOnce);
+    $('#clearLog').addEventListener('click',()=>{ $('#log').textContent=''; });
 
-
-// ----- Command processing -----
-const extractBlock=(text)=>{ const s=text.indexOf('[KEV_AI::command]'); const e=text.indexOf('[/KEV_AI::command]'); return (s!==-1&&e!==-1&&e>s)? text.slice(s+'[KEV_AI::command]'.length,e).trim() : text.trim(); };
-async function processOnce(){ try{ const rawAll=$('#cmdInput').value; const raw=extractBlock(rawAll); const parsed=JSON.parse(raw); const id=parsed.id||Math.random().toString(36).slice(2); const target=(parsed.target||'local').toLowerCase(); const mode=$('#routeMode').value; const effective=mode==='auto'?target:mode; const body={id,raw,parsed,source:'web-relay',ts:Date.now()};
-if((effective==='local'||effective==='both')){ if(!ssdRoot){ log('local: no SSD selected'); } else { const op=(parsed.op||'').toLowerCase(); const a=parsed.args||{}; if(op==='file_ops.read_file'||op==='read_file'){ log('local read:', await readFile(ssdRoot,a.path)); } else if(op==='file_ops.write_file'||op==='write_file'){ log('local write:', await writeFile(ssdRoot,a.path,a.content||'')); } else if(op==='file_ops.list_dir'||op==='list_dir'){ log('local list:', await listDir(ssdRoot,a.path||'.')); } else if(op==='file_ops.mkdirs'||op==='mkdirs'){ await ensureDir(ssdRoot,a.path); log('local mkdirs ok:', a.path); } else if(op==='file_ops.delete_file'||op==='delete_file'){ log('local delete:', await deleteFile(ssdRoot,a.path)); } else if(op==='system_control.run'||op==='run_cmd'){ log('local run_cmd ignored in browser'); } else { log('local unknown op:', op); } } }
-const bypass=$('#bypassRender').checked; if((effective==='render'||effective==='both') || (effective==='local'&&target==='render')){ const op=(parsed.op||'').toLowerCase(); if(bypass && op.startsWith('github.')){ const repo=(parsed.args&&parsed.args.repo)||$('#ghRepo').value.trim(); if(op==='github.get_file'){ const out=await ghGetFile({repo, path:parsed.args.path, ref:parsed.args.ref||$('#ghBranch').value.trim()}); log('github get_file:', {path:parsed.args.path, size:out.size, sha:out.sha}); } else if(op==='github.put_file'){ const out=await ghPutFile({repo, path:parsed.args.path, content:parsed.args.content||'', message:parsed.args.message||'', branch:parsed.args.branch||$('#ghBranch').value.trim()}); log('github put_file:', { path: parsed.args.path, commit: out?.commit?.sha?.slice(0,7) }); } else { log('github op not supported in bypass mode:', op); } } else { const rurl=$('#renderUrl').value.trim(); const secret=$('#sharedSecret').value.trim(); const res=await postRender(rurl,secret,body); log('render response:', res.status, res.json); } }
-}catch(e){ log('error:', e?.message||e); } }
-
-
-$('#runOnce').addEventListener('click', processOnce);
-
-
-// ----- Auto-exec from extension/bookmarklet -----
-(function(){ const q=[]; let busy=false; async function run(raw){ const ta=$('#cmdInput'); if(ta) ta.value=`[KEV_AI::command]
-${raw}
-[/KEV_AI::command]`; await processOnce(); } async function pump(){ if(busy) return; busy=true; try{ while(q.length){ const raw=q.shift(); await run(raw);} } finally { busy=false; } } window.addEventListener('message', (ev)=>{ const d=ev.data||{}; if(d.type==='HAL_PAYLOAD'&&typeof d.raw==='string'){ q.push(d.raw); pump(); } if(d.type==='HAL_CONTROL'&&d.cmd==='settings'&&d.settings){ try{ const s=d.settings; if(typeof s.bypassRender==='boolean'){ const el=$('#bypassRender'); if(el){ el.checked=s.bypassRender; el.dispatchEvent(new Event('change')); } } if(s.ghToken!==undefined){ $('#ghToken').value=s.ghToken; $('#ghToken').dispatchEvent(new Event('input')); } if(s.ghRepo){ $('#ghRepo').value=s.ghRepo; $('#ghRepo').dispatchEvent(new Event('input')); } if(s.ghBranch){ $('#ghBranch').value=s.ghBranch; $('#ghBranch').dispatchEvent(new Event('input')); } const rs=$('#rememberSettings'); if(rs&&!rs.checked){ rs.checked=true; rs.dispatchEvent(new Event('change')); } }catch{} } if(d.type==='HAL_CONTROL'&&d.cmd==='reconnect'){ try{ reconnectSsd(); }catch{} } }); })();
-</script>
+    /* Auto-exec queue for messages from extension/bookmarklet */
+    (function(){
+      const q=[]; let busy=false;
+      async function run(raw){ const ta=$('#cmdInput'); if(ta) ta.value=`[KEV_AI::command]\n${raw}\n[/KEV_AI::command]`; await processOnce(); }
+      async function pump(){ if(busy) return; busy=true; try{ while(q.length){ const raw=q.shift(); await run(raw);} } finally { busy=false; } }
+      window.addEventListener('message',(ev)=>{
+        const d=ev.data||{};
+        if(d.type==='HAL_PAYLOAD' && typeof d.raw==='string'){ q.push(d.raw); pump(); }
+        if(d.type==='HAL_CONTROL' && d.cmd==='settings' && d.settings){
+          try{
+            const s=d.settings;
+            if(typeof s.bypassRender==='boolean'){ const el=$('#bypassRender'); if(el){ el.checked=s.bypassRender; el.dispatchEvent(new Event('change')); } }
+            if(s.ghToken!==undefined){ $('#ghToken').value=s.ghToken; $('#ghToken').dispatchEvent(new Event('input')); }
+            if(s.ghRepo){ $('#ghRepo').value=s.ghRepo; $('#ghRepo').dispatchEvent(new Event('input')); }
+            if(s.ghBranch){ $('#ghBranch').value=s.ghBranch; $('#ghBranch').dispatchEvent(new Event('input')); }
+            const rs=$('#rememberSettings'); if(rs && !rs.checked){ rs.checked=true; rs.dispatchEvent(new Event('change')); }
+          }catch{}
+        }
+        if(d.type==='HAL_CONTROL' && d.cmd==='reconnect'){ try{ reconnectSsd(); }catch{} }
+      });
+    })();
+  </script>
 </body>
 </html>
