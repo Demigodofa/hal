@@ -147,6 +147,17 @@
   async function listDir(root,rel='.') { const dir=rel==='.'?root:await ensureDir(root,rel); const items=[]; for await (const [name,handle] of dir.entries()){ const item={name,is_dir:handle.kind==='directory'}; if(handle.kind==='file'){ const f=await handle.getFile(); item.size=f.size; } items.push(item);} return {path:rel,items}; }
   async function deleteFile(root,rel){ const {dir,name}=await getParent(root,rel,false); await dir.removeEntry(name,{recursive:false}); return {path:rel,deleted:true}; }
 
+  // --- Append helpers ---
+  async function readIfExists(root, rel){ try{ return await readFile(root, rel); } catch { return { path: rel, content: '' }; } }
+  async function appendText(root, rel, text, ensureSep=true){ const cur=(await readIfExists(root,rel)).content||''; const sep = cur && ensureSep && !cur.endsWith('
+') ? '
+' : ''; return await writeFile(root, rel, cur + sep + (text||'')); }
+  async function appendJsonArray(root, rel, obj){ let cur=''; try{ cur=(await readFile(root,rel)).content; }catch{} let arr=[]; try{ arr = cur ? JSON.parse(cur) : []; if(!Array.isArray(arr)) throw new Error('not array'); }catch{ arr = []; } arr.push(obj); const pretty = JSON.stringify(arr,null,2)+'
+'; return await writeFile(root, rel, pretty); }
+  async function appendJsonl(root, rel, obj){ const line = JSON.stringify(obj)+'
+'; return await appendText(root, rel, line, false); }
+
+
   /* Clipboard watcher (optional) */
   let watchTimer=null; $('#watchClipboard').addEventListener('click', async (e)=>{ if(watchTimer){ clearInterval(watchTimer); watchTimer=null; e.target.textContent='Watch Clipboard'; return;} try{ await navigator.permissions.query({name:'clipboard-read'});}catch{} e.target.textContent='Watching…'; let last=''; watchTimer=setInterval(async()=>{ try{ const t=await navigator.clipboard.readText(); if(t && t!==last && t.includes('[KEV_AI::command]')){ last=t; $('#cmdInput').value=t; log('clipboard captured block'); await processOnce(true); } }catch{} },1500); });
 
@@ -176,7 +187,21 @@
           else if(op==='file_ops.list_dir'||op==='list_dir'){ log('local list:', await listDir(ssdRoot,a.path||'.')); }
           else if(op==='file_ops.mkdirs'||op==='mkdirs'){ await ensureDir(ssdRoot,a.path); log('local mkdirs ok:', a.path); }
           else if(op==='file_ops.delete_file'||op==='delete_file'){ log('local delete:', await deleteFile(ssdRoot,a.path)); }
-          else if(op==='system_control.run'||op==='run_cmd'){ log('local run_cmd ignored in browser'); }
+          else if(op==='file_ops.append_file'||op==='append_file'){
+            const mode = String(a.mode||'text').toLowerCase();
+            try{
+              if(mode==='json-array'){
+                const obj = a.json ?? (a.content ? JSON.parse(a.content) : {});
+                log('local append (json-array):', await appendJsonArray(ssdRoot,a.path,obj));
+              } else if(mode==='jsonl'){
+                const obj = a.json ?? (a.content ? JSON.parse(a.content) : {});
+                log('local append (jsonl):', await appendJsonl(ssdRoot,a.path,obj));
+              } else { // text/markdown
+                const ensure = a.ensureNewline !== false; // default true
+                log('local append (text):', await appendText(ssdRoot,a.path,a.content||'', ensure));
+              }
+            }catch(err){ log('append error:', err?.message||err); }
+          } else if(op==='system_control.run'||op==='run_cmd'){ log('local run_cmd ignored in browser'); }
           else { log('local unknown op:', op); }
         }
       }
