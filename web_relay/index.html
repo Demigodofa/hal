@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- VERSION: v19 (drive-agnostic GENESIS auto-detect + scheduler + GitHub-only) -->
+<!-- VERSION: v19.1 (drive-agnostic GENESIS auto-detect + scheduler + GitHub-only; fixed CSS tag) -->
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>HAL Web Relay — GENESIS v19 (Auto-detect + Scheduler + GitHub-only)</title
+  <title>HAL Web Relay — GENESIS v19.1</title>
   <style>
     body{font-family:system-ui,Segoe UI,Roboto,Arial;margin:0;background:#f8fafc;color:#0f172a}
     .wrap{max-width:980px;margin:24px auto;padding:0 16px}
@@ -28,7 +28,7 @@
   <div class="wrap">
     <div class="card">
       <h1>HAL Web Relay — GENESIS</h1>
-      <p class="muted">Remote ops use GitHub API only. SSD selection is drive‑agnostic and will auto‑lock onto a <b>GENESIS</b> root/folder/marker.</p>
+      <p class="muted">Remote ops use GitHub API only. SSD selection is drive‑agnostic and auto‑locks onto a <b>GENESIS</b> root/folder/marker.</p>
 
       <div class="row">
         <div class="col">
@@ -99,15 +99,11 @@
   async function putHandle(k,h){ const db=await idb(); return new Promise((res,rej)=>{ const tx=db.transaction(DB_STORE,'readwrite'); tx.objectStore(DB_STORE).put(h,k); tx.oncomplete=()=>res(); tx.onerror=()=>rej(tx.error); }); }
   async function getHandle(k){ const db=await idb(); return new Promise((res,rej)=>{ const tx=db.transaction(DB_STORE,'readonly'); const q=tx.objectStore(DB_STORE).get(k); q.onsuccess=()=>res(q.result); q.onerror=()=>rej(q.error); }); }
 
-  // Try to coerce any chosen directory into a GENESIS root using heuristics/marker
   async function coerceGenesis(h){
     const upper=(h?.name||'').toUpperCase();
-    if(upper==='GENESIS') return h; // exact folder
-    // If a GENESIS folder exists under the chosen root, use it
+    if(upper==='GENESIS') return h;
     try{ const d=await h.getDirectoryHandle('GENESIS',{create:false}); return d; }catch{}
-    // If marker exists, accept chosen dir
     try{ const f=await h.getFileHandle('.genesis_root',{create:false}); await f.getFile(); return h; }catch{}
-    // Fallback: assume chosen is the root, create marker so we remember
     try{ const f=await h.getFileHandle('.genesis_root',{create:true}); const w=await f.createWritable(); await w.write('ok'); await w.close(); }catch{}
     return h;
   }
