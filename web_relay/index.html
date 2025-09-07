@@ -132,6 +132,7 @@
 
     async function ghGetFile({repo, path, ref}){
       const token = $('#bypassRender').checked ? $('#ghToken').value.trim() : '';
+      const encSeg = (p) => String(p).split('/').map(encodeURIComponent).join('/');
       const url = `${ghBase}/repos/${repo}/contents/${encodeURIComponent(path)}${ref?`?ref=${encodeURIComponent(ref)}`:''}`;
       const res = await fetch(url, { headers: ghHdrs(token) });
       if (!res.ok) throw new Error(`github GET ${res.status}`);
@@ -143,23 +144,30 @@
     }
 
     async function ghPutFile({repo, path, content, message, branch}){
-      const token = $('#bypassRender').checked ? $('#ghToken').value.trim() : '';
-      const url = `${ghBase}/repos/${repo}/contents/${encodeURIComponent(path)}`;
+    const token = $('#bypassRender').checked ? $('#ghToken').value.trim() : '';
+    const url = `${ghBase}/repos/${repo}/contents/${encSeg(path)}`;
       let sha = undefined;
-      try {
-        const cur = await fetch(url + (branch?`?ref=${encodeURIComponent(branch)}`:''), { headers: ghHdrs(token) });
-        if (cur.ok) { const j = await cur.json(); sha = j.sha; }
-      } catch {}
-      const body = {
-        message: message || `update ${path}`,
-        content: b64e(content || ''),
-        branch: branch || $('#ghBranch').value.trim() || 'main',
-        sha
-      };
-      const res = await fetch(url, { method:'PUT', headers: { ...ghHdrs(token), 'Content-Type':'application/json' }, body: JSON.stringify(body) });
-      if (!res.ok) throw new Error(`github PUT ${res.status}`);
-      return await res.json();
-    }
+    try {
+      const refQ = branch ? `?ref=${encodeURIComponent(branch)}` : '';
+      const cur = await fetch(url + refQ, { headers: ghHdrs(token) });
+      if (cur.ok) { const j = await cur.json(); sha = j.sha; }
+    } catch {}
+
+    const body = {
+      message: message || `update ${path}`,
+      content: b64e(content || ''),
+      branch: branch || $('#ghBranch').value.trim() || 'main',
+      sha
+    };
+    const res = await fetch(url, {
+      method:'PUT',
+      headers: { ...ghHdrs(token), 'Content-Type':'application/json' },
+      body: JSON.stringify(body)
+    });
+    if (!res.ok) throw new Error(`github PUT ${res.status}`);
+    return await res.json();
+  }
+</script>
 
     async function postRender(url, secret, body){
       const sig = secret ? await hmacSHA256(secret, body.raw) : undefined;
