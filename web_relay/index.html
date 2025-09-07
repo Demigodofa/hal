@@ -58,4 +58,169 @@
             </div>
           </div>
           <div class="row">
-            <d
+            <div class="col">
+              <label>Default Branch</label>
+              <input id="ghBranch" value="main" />
+            </div>
+            <div class="col">
+              <label>Render Listener URL</label>
+              <input id="renderUrl" value="https://hal-ku4c.onrender.com/kev_ai/listener"/>
+            </div>
+          </div>
+          <div class="row">
+            <div class="col">
+              <label>Shared Secret (Render HMAC, optional)</label>
+              <input id="sharedSecret" type="password" placeholder="match Render secret if set"/>
+            </div>
+            <div>
+              <label>Mode</label>
+              <select id="routeMode">
+                <option value="auto" selected>auto</option>
+                <option value="local">local</option>
+                <option value="render">render</option>
+                <option value="both">both</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <label style="margin-top:10px">Command block or JSON</label>
+      <textarea id="cmdInput" spellcheck="false" placeholder="Paste [KEV_AI::command]... or raw JSON here"></textarea>
+      <div class="row" style="margin-top:8px">
+        <div class="col">
+          <button class="btn ok" id="runOnce">Process Once</button>
+          <button class="btn alt" id="clearLog">Clear Log</button>
+        </div>
+      </div>
+
+      <label style="margin-top:12px">Log</label>
+      <div class="log" id="log"></div>
+      <p class="muted">Browsers cannot run local shell; use Render for system commands if needed. Chromium browsers recommended.</p>
+    </div>
+  </div>
+
+  <script>
+    const $ = (s)=>document.querySelector(s);
+    const log = (...a)=>{ const t=a.map(x=>typeof x==='string'?x:JSON.stringify(x,null,2)).join(' '); const el=$('#log'); el.textContent += (el.textContent? '\\n':'') + t; el.scrollTop=el.scrollHeight; };
+
+    let ssdRoot = null; // FileSystemDirectoryHandle
+
+    $('#pickBtn').addEventListener('click', async () => {
+      try { ssdRoot = await window.showDirectoryPicker(); $('#ssdLabel').value = ssdRoot.name || '(selected)'; log('selected root:', ssdRoot.name); } catch(e){ log('picker canceled'); }
+    });
+
+    const splitPath = (p)=> String(p).split('/').filter(Boolean).filter(s=>s!=='.'&&s!=='..');
+    async function ensureDir(root, rel){ let d=root; for(const part of splitPath(rel)){ d = await d.getDirectoryHandle(part,{create:true}); } return d; }
+    async function getParent(root, rel, create){ const parts=splitPath(rel); if(!parts.length) throw new Error('empty path'); let d=root; for(let i=0;i<parts.length-1;i++){ d = await d.getDirectoryHandle(parts[i],{create}); } return {dir:d,name:parts[parts.length-1]}; }
+
+    async function writeFile(root, rel, content){ const {dir,name}=await getParent(root,rel,true); const fh=await dir.getFileHandle(name,{create:true}); const w=await fh.createWritable(); await w.write(content||''); await w.close(); return {path:rel,bytes:(content||'').length}; }
+    async function readFile(root, rel){ const {dir,name}=await getParent(root,rel,false); const fh=await dir.getFileHandle(name,{create:false}); const file=await fh.getFile(); return {path:rel, content: await file.text()}; }
+    async function listDir(root, rel='.') { const dir = rel==='.'? root : await ensureDir(root, rel); const items=[]; for await (const [name,handle] of dir.entries()){ const item={name,is_dir:handle.kind==='directory'}; if(handle.kind==='file'){ const f=await handle.getFile(); item.size=f.size; } items.push(item);} return {path:rel, items}; }
+    async function deleteFile(root, rel){ const {dir,name}=await getParent(root,rel,false); await dir.removeEntry(name,{recursive:false}); return {path:rel,deleted:true}; }
+
+    async function hmacSHA256(key, message){ if(!key) return; const enc=new TextEncoder(); const k=await crypto.subtle.importKey('raw', enc.encode(key), {name:'HMAC',hash:'SHA-256'}, false, ['sign']); const sig=await crypto.subtle.sign('HMAC', k, enc.encode(message)); return Array.from(new Uint8Array(sig)).map(b=>b.toString(16).padStart(2,'0')).join(''); }
+
+    // --- GitHub REST (direct, no Render) ---
+    const ghBase = 'https://api.github.com';
+    const ghHdrs = (token)=> ({
+      'Accept': 'application/vnd.github+json',
+      'Authorization': token ? `Bearer ${token}` : undefined,
+    });
+    const b64e = (txt)=> btoa(unescape(encodeURIComponent(txt)));
+    const b64d = (b64)=> decodeURIComponent(escape(atob(b64)));
+
+    async function ghGetFile({repo, path, ref}){
+      const token = $('#bypassRender').checked ? $('#ghToken').value.trim() : '';
+      const url = `${ghBase}/repos/${repo}/contents/${encodeURIComponent(path)}${ref?`?ref=${encodeURIComponent(ref)}`:''}`;
+      const res = await fetch(url, { headers: ghHdrs(token) });
+      if (!res.ok) throw new Error(`github GET ${res.status}`);
+      const json = await res.json();
+      if (json && json.content && json.encoding === 'base64') {
+        json.text = b64d(json.content.replace(/\n/g,''));
+      }
+      return json;
+    }
+
+    async function ghPutFile({repo, path, content, message, branch}){
+      const token = $('#bypassRender').checked ? $('#ghToken').value.trim() : '';
+      const url = `${ghBase}/repos/${repo}/contents/${encodeURIComponent(path)}`;
+      let sha = undefined;
+      try {
+        const cur = await fetch(url + (branch?`?ref=${encodeURIComponent(branch)}`:''), { headers: ghHdrs(token) });
+        if (cur.ok) { const j = await cur.json(); sha = j.sha; }
+      } catch {}
+      const body = {
+        message: message || `update ${path}`,
+        content: b64e(content || ''),
+        branch: branch || $('#ghBranch').value.trim() || 'main',
+        sha
+      };
+      const res = await fetch(url, { method:'PUT', headers: { ...ghHdrs(token), 'Content-Type':'application/json' }, body: JSON.stringify(body) });
+      if (!res.ok) throw new Error(`github PUT ${res.status}`);
+      return await res.json();
+    }
+
+    async function postRender(url, secret, body){
+      const sig = secret ? await hmacSHA256(secret, body.raw) : undefined;
+      const res = await fetch(url,{ method:'POST', headers:{ 'Content-Type':'application/json', ...(sig?{'X-KEV-Signature':sig}:{}) }, body: JSON.stringify(body)});
+      const json = await res.json().catch(()=>({}));
+      return { ok: res.ok, status: res.status, json };
+    }
+
+    const extractBlock=(text)=>{ const s=text.indexOf('[KEV_AI::command]'); const e=text.indexOf('[/KEV_AI::command]'); return (s!==-1&&e!==-1&&e>s)? text.slice(s+'[KEV_AI::command]'.length,e).trim() : text.trim(); };
+
+    $('#runOnce').addEventListener('click', async ()=>{
+      try{
+        const rawAll = $('#cmdInput').value;
+        const raw = extractBlock(rawAll);
+        const parsed = JSON.parse(raw);
+        const id = parsed.id || Math.random().toString(36).slice(2);
+        const target = (parsed.target||'local').toLowerCase();
+        const mode = $('#routeMode').value; // auto|local|render|both
+        const effective = mode==='auto'? target : mode;
+        const body = { id, raw, parsed, source:'web-relay', ts: Date.now() };
+
+        // Local ops
+        if ((effective==='local'||effective==='both')){
+          if(!ssdRoot){ log('local: no SSD selected'); }
+          else {
+            const op=(parsed.op||'').toLowerCase(); const a=parsed.args||{};
+            if(op==='file_ops.read_file'||op==='read_file'){ log('local read:', await readFile(ssdRoot, a.path)); }
+            else if(op==='file_ops.write_file'||op==='write_file'){ log('local write:', await writeFile(ssdRoot, a.path, a.content||'')); }
+            else if(op==='file_ops.list_dir'||op==='list_dir'){ log('local list:', await listDir(ssdRoot, a.path||'.')); }
+            else if(op==='file_ops.mkdirs'||op==='mkdirs'){ await ensureDir(ssdRoot, a.path); log('local mkdirs ok:', a.path); }
+            else if(op==='file_ops.delete_file'||op==='delete_file'){ log('local delete:', await deleteFile(ssdRoot, a.path)); }
+            else if(op==='system_control.run'||op==='run_cmd'){ log('local run_cmd ignored in browser'); }
+            else { log('local unknown op:', op); }
+          }
+        }
+
+        // Remote: direct GitHub when bypass checked, else Render
+        const bypass = $('#bypassRender').checked;
+        if ((effective==='render'||effective==='both') || (effective==='local'&&target==='render')){
+          const op=(parsed.op||'').toLowerCase();
+          if (bypass && op.startsWith('github.')) {
+            const repo = (parsed.args && parsed.args.repo) || $('#ghRepo').value.trim();
+            if (op==='github.get_file') {
+              const out = await ghGetFile({repo, path: parsed.args.path, ref: parsed.args.ref || $('#ghBranch').value.trim()});
+              log('github get_file:', { path: parsed.args.path, size: out.size, sha: out.sha });
+            } else if (op==='github.put_file') {
+              const out = await ghPutFile({repo, path: parsed.args.path, content: parsed.args.content || '', message: parsed.args.message || '', branch: parsed.args.branch || $('#ghBranch').value.trim()});
+              log('github put_file:', { path: parsed.args.path, commit: out?.commit?.sha?.slice(0,7) });
+            } else {
+              log('github op not supported in bypass mode:', op);
+            }
+          } else {
+            const rurl = $('#renderUrl').value.trim();
+            const secret = $('#sharedSecret').value.trim();
+            const res = await postRender(rurl, secret, body); log('render response:', res.status, res.json);
+          }
+        }
+      }catch(e){ log('error:', e?.message||e); }
+    });
+
+    $('#clearLog').addEventListener('click', ()=>{ $('#log').textContent=''; });
+  </script>
+</body>
+</html>
