@@ -1,6 +1,15 @@
 (function () {
   "use strict";
 
+  // ---------- Early Stub ----------
+  // Prevents race condition with content_relay.js
+  if (typeof window.runCommandBlock !== "function") {
+    window.runCommandBlock = (raw) => {
+      console.warn("[HAL Relay] runCommandBlock called before full init, queueing:", raw);
+      (window._halQueue = window._halQueue || []).push(raw);
+    };
+  }
+
   // ---------- Tiny helpers ----------
   function $(id) { return document.getElementById(id); }
   const NL = "\n";
@@ -46,7 +55,7 @@
   }
   const S = loadSettings();
 
-  // Populate UI from settings
+  // Populate UI
   if ($("ghToken")) $("ghToken").value = S.ghToken;
   if ($("ghRepo")) $("ghRepo").value = S.ghRepo;
   if ($("ghBranch")) $("ghBranch").value = S.ghBranch;
@@ -68,7 +77,6 @@
     S.schedEvery = parseInt($("schedEvery")?.value || "30", 10);
     saveSettings(S);
   }
-
   document.addEventListener("input", e => { if (["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName)) maybeSave(); }, true);
   document.addEventListener("change", e => { if (["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName)) maybeSave(); }, true);
 
@@ -218,9 +226,19 @@
     } catch (e) { log("error:", e.message || e); }
   }
 
-  // ---------- Expose ----------
-  window.runCommandBlock = function (raw) { log("runCommandBlock called", raw); return processOnce(raw); };
+  // ---------- Final Exposure ----------
+  window.runCommandBlock = function (raw) {
+    log("runCommandBlock called", raw);
+    return processOnce(raw);
+  };
   console.log("[HAL Relay] runCommandBlock exposed");
+
+  // Flush queued commands if stub was used
+  if (Array.isArray(window._halQueue) && window._halQueue.length > 0) {
+    console.log("[HAL Relay] flushing queued commands:", window._halQueue.length);
+    for (const raw of window._halQueue) processOnce(raw);
+    window._halQueue = [];
+  }
 
   // ---------- Button wiring ----------
   const runBtn = $("runOnce");
