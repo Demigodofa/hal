@@ -30,7 +30,8 @@
     schedEnable: false,
     schedEvery: 30
   };
-  function load() {
+
+  function loadSettings() {
     try {
       const o = JSON.parse(localStorage.getItem(LS_KEY) || "{}");
       const r = {};
@@ -38,9 +39,14 @@
       return r;
     } catch { return { ...DEF }; }
   }
-  function save(s) { try { localStorage.setItem(LS_KEY, JSON.stringify(s)); } catch { } }
-  const S = load();
 
+  function saveSettings(s) {
+    try { localStorage.setItem(LS_KEY, JSON.stringify(s)); } catch { }
+  }
+
+  const S = loadSettings();
+
+  // populate UI from settings
   if ($("ghToken")) $("ghToken").value = S.ghToken;
   if ($("ghRepo")) $("ghRepo").value = S.ghRepo;
   if ($("ghBranch")) $("ghBranch").value = S.ghBranch;
@@ -60,19 +66,21 @@
     S.autoClear = $("autoClear")?.value || "1";
     S.schedEnable = $("schedEnable")?.checked || false;
     S.schedEvery = parseInt($("schedEvery")?.value || "30", 10);
-    save(S);
+    saveSettings(S);
   }
+
   document.addEventListener("input", (e) => {
-    const t = e.target;
-    if (t && ["INPUT", "SELECT", "TEXTAREA"].includes(t.tagName)) maybeSave();
-  }, true);
-  document.addEventListener("change", (e) => {
-    const t = e.target;
-    if (t && ["INPUT", "SELECT", "TEXTAREA"].includes(t.tagName)) maybeSave();
+    if (["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName)) maybeSave();
   }, true);
 
-  // ---------- IndexedDB ----------
+  document.addEventListener("change", (e) => {
+    if (["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName)) maybeSave();
+  }, true);
+
+  // ---------- SSD ----------
   const DB_NAME = "hal-relay", DB_STORE = "handles";
+  let ssdRoot = null;
+
   function idb() {
     return new Promise((res, rej) => {
       const r = indexedDB.open(DB_NAME, 1);
@@ -81,6 +89,7 @@
       r.onerror = () => rej(r.error);
     });
   }
+
   function putHandle(k, h) {
     return idb().then(db => new Promise((res, rej) => {
       const tx = db.transaction(DB_STORE, "readwrite");
@@ -89,6 +98,7 @@
       tx.onerror = () => rej(tx.error);
     }));
   }
+
   function getHandle(k) {
     return idb().then(db => new Promise((res, rej) => {
       const tx = db.transaction(DB_STORE, "readonly");
@@ -98,8 +108,6 @@
     }));
   }
 
-  // ---------- SSD ----------
-  let ssdRoot = null;
   function coerceGenesis(h) {
     return Promise.resolve().then(() => {
       const name = (h && h.name) ? String(h.name).toUpperCase() : "";
@@ -107,6 +115,7 @@
       return h.getDirectoryHandle("GENESIS", { create: false }).catch(() => h);
     });
   }
+
   function setSsd(h) {
     return coerceGenesis(h).then((g) => {
       ssdRoot = g || null;
@@ -114,6 +123,7 @@
       if (ssdRoot && $("rememberSsd")?.checked) return putHandle("ssdRoot", ssdRoot).catch(() => { });
     });
   }
+
   function reconnectSsd(userActivation) {
     return getHandle("ssdRoot").then((h) => {
       if (!h) { log("no saved SSD handle"); return; }
@@ -123,6 +133,7 @@
         .catch((e) => log("reconnect error:", e.message || e));
     });
   }
+
   if ($("pickBtn")) $("pickBtn").addEventListener("click", () => {
     if (!("showDirectoryPicker" in window)) {
       log("picker error: File System Access API not available.");
@@ -131,10 +142,12 @@
     window.showDirectoryPicker().then(setSsd).then(() => log("selected root set"))
       .catch((err) => log("picker error:", err.message || err));
   });
+
   if ($("reconnectBtn")) $("reconnectBtn").addEventListener("click", () => {
     log("reconnect: requesting permission...");
     reconnectSsd(true);
   });
+
   window.addEventListener("DOMContentLoaded", () => {
     log("Boot OK (GitHub + SSD)");
     reconnectSsd(false);
@@ -142,19 +155,21 @@
 
   // ---------- Local FS ops ----------
   function splitPath(p) { return String(p).split("/").filter((s) => s && s !== "." && s !== ".."); }
+
   function ensureDir(root, rel) {
     return splitPath(rel).reduce((d, part) => d.then((dir) => dir.getDirectoryHandle(part, { create: true })), Promise.resolve(root));
   }
+
   function getParent(root, rel, create) {
     const parts = splitPath(rel);
     if (!parts.length) throw new Error("empty path");
     let d = Promise.resolve(root);
     for (let i = 0; i < parts.length - 1; i++) {
-      const part = parts[i];
-      d = d.then((dir) => dir.getDirectoryHandle(part, { create }));
+      d = d.then((dir) => dir.getDirectoryHandle(parts[i], { create }));
     }
     return d.then((dir) => ({ dir, name: parts[parts.length - 1] }));
   }
+
   function writeFile(root, rel, content) {
     return getParent(root, rel, true).then(({ dir, name }) =>
       dir.getFileHandle(name, { create: true }).then((fh) =>
@@ -162,22 +177,26 @@
       )
     );
   }
+
   function readFile(root, rel) {
     return getParent(root, rel, false).then(({ dir, name }) =>
       dir.getFileHandle(name, { create: false }).then((fh) => fh.getFile().then((f) => f.text()))
     );
   }
+
   function deleteFile(root, rel) {
     return getParent(root, rel, false).then(({ dir, name }) =>
       dir.removeEntry(name, { recursive: false })
     );
   }
+
   function appendText(root, rel, text, ensureSep) {
     return readFile(root, rel).catch(() => "").then((cur) => {
       const sep = (cur && ensureSep && !/\n$/.test(cur)) ? NL : "";
       return writeFile(root, rel, cur + sep + (text || ""));
     });
   }
+
   function appendJsonArray(root, rel, obj) {
     return readFile(root, rel).catch(() => "[]").then((txt) => {
       let arr = [];
@@ -186,41 +205,79 @@
       return writeFile(root, rel, JSON.stringify(arr, null, 2) + NL);
     });
   }
+
   function appendJsonl(root, rel, obj) {
     return appendText(root, rel, JSON.stringify(obj) + NL, false);
   }
 
   // ---------- GitHub ----------
-  const ghBase = "https://api.github.com";
-  function ghHdrs(tok) {
-    const h = { "Accept": "application/vnd.github+json" };
-    if (tok) h["Authorization"] = "Bearer " + tok;
-    return h;
+  const GITHUB_API = "https://api.github.com";
+
+  function ghHeaders(tok) {
+    return {
+      "Authorization": `token ${tok}`,
+      "Accept": "application/vnd.github.v3+json",
+      "Content-Type": "application/json"
+    };
   }
-  function b64e(t) { return btoa(unescape(encodeURIComponent(t))); }
+
+  function b64Encode(t) { return btoa(unescape(encodeURIComponent(t))); }
   function encSeg(p) { return String(p).split("/").map(encodeURIComponent).join("/"); }
-  function ghPutFile(opt) {
+
+  async function ghGetFile(opt) {
     const tok = $("ghToken")?.value.trim();
-    const url = ghBase + "/repos/" + opt.repo + "/contents/" + encSeg(opt.path);
-    let sha;
-    const branch = opt.branch || $("ghBranch")?.value.trim() || "main";
-    const checkUrl = url + (branch ? ("?ref=" + encodeURIComponent(branch)) : "");
-    return fetch(checkUrl, { headers: ghHdrs(tok) }).then(r => r.ok ? r.json() : null).then(j => {
-      if (j && j.sha) sha = j.sha;
-      return fetch(url, {
-        method: "PUT",
-        headers: Object.assign({ "Content-Type": "application/json" }, ghHdrs(tok)),
-        body: JSON.stringify({
-          message: opt.message || ("update " + opt.path),
-          content: b64e(opt.content || ""),
-          branch: branch,
-          sha: sha
-        })
-      });
-    }).then(r => {
-      if (!r.ok) throw new Error("github PUT " + r.status);
-      return r.json();
-    });
+    const url = `${GITHUB_API}/repos/${opt.repo}/contents/${encSeg(opt.path)}?ref=${encodeURIComponent(opt.branch)}`;
+    try {
+      const resp = await fetch(url, { headers: ghHeaders(tok) });
+      const data = await resp.json();
+      if (!resp.ok) {
+        log("github get_file ERROR:", data);
+        return null;
+      }
+      const content = atob(data.content.replace(/\n/g, ""));
+      log("github get_file:", { path: opt.path, size: content.length });
+      return content;
+    } catch (e) {
+      log("github get_file ERROR:", e.message);
+      return null;
+    }
+  }
+
+  async function ghPutFile(opt) {
+    const tok = $("ghToken")?.value.trim();
+    const url = `${GITHUB_API}/repos/${opt.repo}/contents/${encSeg(opt.path)}`;
+    const checkUrl = `${url}?ref=${encodeURIComponent(opt.branch)}`;
+
+    let sha = null;
+    try {
+      const check = await fetch(checkUrl, { headers: ghHeaders(tok) });
+      if (check.ok) {
+        const j = await check.json();
+        sha = j.sha;
+      }
+    } catch (_) { }
+
+    const body = {
+      message: opt.message || `update ${opt.path}`,
+      branch: opt.branch,
+      content: b64Encode(opt.content || "")
+    };
+    if (sha) body.sha = sha;
+
+    try {
+      const resp = await fetch(url, { method: "PUT", headers: ghHeaders(tok), body: JSON.stringify(body) });
+      const data = await resp.json();
+      if (!resp.ok) {
+        log("github put_file ERROR:", data);
+        return null;
+      }
+      const commitSha = data.commit?.sha?.substring(0, 7) || "unknown";
+      log("github put_file:", { path: opt.path, commit: commitSha });
+      return commitSha;
+    } catch (e) {
+      log("github put_file ERROR:", e.message);
+      return null;
+    }
   }
 
   // ---------- Normalize + Commands ----------
@@ -246,23 +303,23 @@
 
       if (target === "local") {
         if (!ssdRoot) { log("local: no SSD selected"); return; }
-        if (op === "file_ops.write_file" || op === "write_file") {
+        if (["file_ops.write_file", "write_file"].includes(op)) {
           await writeFile(ssdRoot, a.path, a.content);
           log("local write ok:", a.path); return;
         }
-        if (op === "file_ops.read_file" || op === "read_file") {
+        if (["file_ops.read_file", "read_file"].includes(op)) {
           const txt = await readFile(ssdRoot, a.path);
           log("local read:", { path: a.path, content: txt }); return;
         }
-        if (op === "file_ops.mkdirs" || op === "mkdirs") {
+        if (["file_ops.mkdirs", "mkdirs"].includes(op)) {
           await ensureDir(ssdRoot, a.path);
           log("local mkdir ok:", a.path); return;
         }
-        if (op === "file_ops.delete_file" || op === "delete_file") {
+        if (["file_ops.delete_file", "delete_file"].includes(op)) {
           await deleteFile(ssdRoot, a.path);
           log("local delete ok:", a.path); return;
         }
-        if (op === "file_ops.append_file" || op === "append_file") {
+        if (["file_ops.append_file", "append_file"].includes(op)) {
           const mode = String(a.mode || "text").toLowerCase();
           if (mode === "json-array") {
             const obj = a.json ? a.json : (a.content ? JSON.parse(a.content) : {});
@@ -278,15 +335,10 @@
           await appendText(ssdRoot, a.path, a.content || "", ensureSep);
           log("local append (text):", a.path); return;
         }
-        if (op === "relay.checkpoint_now") {
-          log("checkpoint requested (stub)"); return;
-        }
+        if (op === "relay.checkpoint_now") { log("checkpoint requested (stub)"); return; }
         if (op === "relay.scheduler") {
-          if (a.enabled) {
-            log("scheduler enabled:", a.interval_mins || 30);
-          } else {
-            log("scheduler disabled");
-          }
+          if (a.enabled) log("scheduler enabled:", a.interval_mins || 30);
+          else log("scheduler disabled");
           return;
         }
         log("Unknown local op:", op);
@@ -294,15 +346,22 @@
 
       if (target === "render" || op.startsWith("github.")) {
         if (op === "github.put_file") {
-          const out = await ghPutFile({
+          await ghPutFile({
             repo: a.repo || $("ghRepo")?.value.trim(),
             path: a.path,
             content: a.content || "",
             message: a.message || "",
             branch: a.branch || $("ghBranch")?.value.trim()
           });
-          const c = (out && out.commit && out.commit.sha) ? out.commit.sha : "";
-          log("github put_file:", { path: a.path, commit: c ? c.slice(0, 7) : "" }); return;
+          return;
+        }
+        if (op === "github.get_file") {
+          await ghGetFile({
+            repo: a.repo || $("ghRepo")?.value.trim(),
+            path: a.path,
+            branch: a.branch || $("ghBranch")?.value.trim()
+          });
+          return;
         }
         log("Unsupported github op:", op);
       }
@@ -322,13 +381,4 @@
   const runBtn = $("runOnce");
   if (runBtn) {
     runBtn.addEventListener("click", () => {
-      const rawAll = $("cmdInput")?.value || "";
-      if (!rawAll.trim()) { log("No input in cmdInput"); return; }
-      const cmd = rawAll.includes("[KEV_AI::command]") ?
-        rawAll.replace("[KEV_AI::command]", "").replace("[/KEV_AI::command]", "").trim() :
-        rawAll.trim();
-      processOnce(cmd);
-      if (S.autoClear === "1" && $("cmdInput")) $("cmdInput").value = "";
-    });
-  }
-})();
+      const raw
