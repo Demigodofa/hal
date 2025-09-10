@@ -159,23 +159,62 @@
     );
   }
 
-  // ---------- Commands ----------
-  function processCommand(raw) {
+    // ---------- Commands ----------
+  function extractBlock(t) {
+    var s = t.indexOf("[KEV_AI::command]");
+    var e = t.indexOf("[/KEV_AI::command]");
+    return (s !== -1 && e !== -1 && e > s) ? t.slice(s + 17, e).trim() : t.trim();
+  }
+
+  function normalize(p) {
+    if (!p.op && p.action) p.op = p.action;
+    if (!p.args) {
+      p.args = {};
+      if (p.path) p.args.path = p.path;
+      if (p.mode) p.args.mode = p.mode;
+      if (p.content !== undefined) p.args.content = p.content;
+      if (p.data !== undefined) {
+        if (typeof p.data === "object") p.args.json = p.data;
+        else p.args.content = String(p.data);
+      }
+    }
+    if (!p.target) p.target = "local";
+    return p;
+  }
+
+  function processOnce(raw) {
     try {
-      var parsed = JSON.parse(raw);
-      var op = parsed.op, a = parsed.args || {};
-      if (!ssdRoot) { log("local: no SSD selected"); return; }
-      if (op === "file_ops.mkdirs") return ensureDir(ssdRoot, a.path).then(() => log("mkdir ok", a.path));
-      if (op === "file_ops.write_file") return writeFile(ssdRoot, a.path, a.content).then(() => log("write ok", a.path));
-      if (op === "relay.checkpoint_now") return log("checkpoint requested");
-      log("unknown op", op);
-    } catch (e) { log("error", e.message || e); }
+      var parsed = normalize(JSON.parse(raw));
+      var op = String(parsed.op || "").toLowerCase();
+      var a = parsed.args || {};
+
+      if (!ssdRoot && parsed.target === "local") {
+        log("local: no SSD selected");
+        return;
+      }
+
+      if (op === "file_ops.mkdirs" || op === "mkdirs") {
+        return ensureDir(ssdRoot, a.path).then(() => log("local mkdir ok:", a.path));
+      }
+      if (op === "file_ops.write_file" || op === "write_file") {
+        return writeFile(ssdRoot, a.path, a.content).then(() => log("local write ok:", a.path));
+      }
+      if (op === "relay.checkpoint_now") {
+        log("checkpoint requested");
+        // plug in checkpointNow() when stable
+        return;
+      }
+
+      log("unknown op:", op);
+    } catch (e) {
+      log("error:", e.message || e);
+    }
   }
 
   // ---------- Expose to extension ----------
   window.runCommandBlock = function (raw) {
     log("[HAL Relay] runCommandBlock called", raw);
-    return processCommand(raw);
+    return processOnce(raw);
   };
   console.log("[HAL Relay] runCommandBlock exposed");
 })();
