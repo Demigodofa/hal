@@ -3,15 +3,14 @@
 
   // ---------- Tiny helpers ----------
   function $(id) { return document.getElementById(id); }
-  var NL = "\n";
+  const NL = "\n";
   function toStr(v) {
     try { return typeof v === "string" ? v : JSON.stringify(v, null, 2); }
     catch (e) { return String(v); }
   }
   function log() {
-    var out = [], i;
-    for (i = 0; i < arguments.length; i++) out.push(toStr(arguments[i]));
-    var el = $("log");
+    const out = Array.from(arguments).map(toStr);
+    const el = $("log");
     if (el) {
       el.textContent += (el.textContent ? NL : "") + out.join(" ");
       el.scrollTop = el.scrollHeight;
@@ -20,8 +19,8 @@
   }
 
   // ---------- Settings ----------
-  var LS_KEY = "hal-web-relay-settings";
-  var DEF = {
+  const LS_KEY = "hal-web-relay-settings";
+  const DEF = {
     ghToken: "",
     ghRepo: "Demigodofa/hal",
     ghBranch: "main",
@@ -33,16 +32,15 @@
   };
   function load() {
     try {
-      var o = JSON.parse(localStorage.getItem(LS_KEY) || "{}");
-      var r = {}, k;
-      for (k in DEF) r[k] = o.hasOwnProperty(k) ? o[k] : DEF[k];
+      const o = JSON.parse(localStorage.getItem(LS_KEY) || "{}");
+      const r = {};
+      for (const k in DEF) r[k] = o.hasOwnProperty(k) ? o[k] : DEF[k];
       return r;
-    } catch (e) { return { ...DEF }; }
+    } catch { return { ...DEF }; }
   }
-  function save(s) { try { localStorage.setItem(LS_KEY, JSON.stringify(s)); } catch (e) { } }
-  var S = load();
+  function save(s) { try { localStorage.setItem(LS_KEY, JSON.stringify(s)); } catch { } }
+  const S = load();
 
-  // UI sync
   if ($("ghToken")) $("ghToken").value = S.ghToken;
   if ($("ghRepo")) $("ghRepo").value = S.ghRepo;
   if ($("ghBranch")) $("ghBranch").value = S.ghBranch;
@@ -65,19 +63,19 @@
     save(S);
   }
   document.addEventListener("input", (e) => {
-    var t = e.target;
+    const t = e.target;
     if (t && ["INPUT", "SELECT", "TEXTAREA"].includes(t.tagName)) maybeSave();
   }, true);
   document.addEventListener("change", (e) => {
-    var t = e.target;
+    const t = e.target;
     if (t && ["INPUT", "SELECT", "TEXTAREA"].includes(t.tagName)) maybeSave();
   }, true);
 
   // ---------- IndexedDB ----------
-  var DB_NAME = "hal-relay", DB_STORE = "handles";
+  const DB_NAME = "hal-relay", DB_STORE = "handles";
   function idb() {
     return new Promise((res, rej) => {
-      var r = indexedDB.open(DB_NAME, 1);
+      const r = indexedDB.open(DB_NAME, 1);
       r.onupgradeneeded = () => r.result.createObjectStore(DB_STORE);
       r.onsuccess = () => res(r.result);
       r.onerror = () => rej(r.error);
@@ -85,7 +83,7 @@
   }
   function putHandle(k, h) {
     return idb().then(db => new Promise((res, rej) => {
-      var tx = db.transaction(DB_STORE, "readwrite");
+      const tx = db.transaction(DB_STORE, "readwrite");
       tx.objectStore(DB_STORE).put(h, k);
       tx.oncomplete = () => res();
       tx.onerror = () => rej(tx.error);
@@ -93,18 +91,18 @@
   }
   function getHandle(k) {
     return idb().then(db => new Promise((res, rej) => {
-      var tx = db.transaction(DB_STORE, "readonly");
-      var q = tx.objectStore(DB_STORE).get(k);
+      const tx = db.transaction(DB_STORE, "readonly");
+      const q = tx.objectStore(DB_STORE).get(k);
       q.onsuccess = () => res(q.result);
       q.onerror = () => rej(q.error);
     }));
   }
 
   // ---------- SSD ----------
-  var ssdRoot = null;
+  let ssdRoot = null;
   function coerceGenesis(h) {
     return Promise.resolve().then(() => {
-      var name = (h && h.name) ? String(h.name).toUpperCase() : "";
+      const name = (h && h.name) ? String(h.name).toUpperCase() : "";
       if (name === "GENESIS") return h;
       return h.getDirectoryHandle("GENESIS", { create: false }).catch(() => h);
     });
@@ -137,7 +135,6 @@
     log("reconnect: requesting permission...");
     reconnectSsd(true);
   });
-
   window.addEventListener("DOMContentLoaded", () => {
     log("Boot OK (GitHub + SSD)");
     reconnectSsd(false);
@@ -148,28 +145,66 @@
   function ensureDir(root, rel) {
     return splitPath(rel).reduce((d, part) => d.then((dir) => dir.getDirectoryHandle(part, { create: true })), Promise.resolve(root));
   }
+  function getParent(root, rel, create) {
+    const parts = splitPath(rel);
+    if (!parts.length) throw new Error("empty path");
+    let d = Promise.resolve(root);
+    for (let i = 0; i < parts.length - 1; i++) {
+      const part = parts[i];
+      d = d.then((dir) => dir.getDirectoryHandle(part, { create }));
+    }
+    return d.then((dir) => ({ dir, name: parts[parts.length - 1] }));
+  }
   function writeFile(root, rel, content) {
-    return ensureDir(root, rel.split("/").slice(0, -1).join("/")).then((dir) =>
-      dir.getFileHandle(rel.split("/").pop(), { create: true })
-        .then((fh) => fh.createWritable().then((w) => w.write(content || "").then(() => w.close())))
+    return getParent(root, rel, true).then(({ dir, name }) =>
+      dir.getFileHandle(name, { create: true }).then((fh) =>
+        fh.createWritable().then((w) => w.write(content || "").then(() => w.close()))
+      )
     );
+  }
+  function readFile(root, rel) {
+    return getParent(root, rel, false).then(({ dir, name }) =>
+      dir.getFileHandle(name, { create: false }).then((fh) => fh.getFile().then((f) => f.text()))
+    );
+  }
+  function deleteFile(root, rel) {
+    return getParent(root, rel, false).then(({ dir, name }) =>
+      dir.removeEntry(name, { recursive: false })
+    );
+  }
+  function appendText(root, rel, text, ensureSep) {
+    return readFile(root, rel).catch(() => "").then((cur) => {
+      const sep = (cur && ensureSep && !/\n$/.test(cur)) ? NL : "";
+      return writeFile(root, rel, cur + sep + (text || ""));
+    });
+  }
+  function appendJsonArray(root, rel, obj) {
+    return readFile(root, rel).catch(() => "[]").then((txt) => {
+      let arr = [];
+      try { arr = JSON.parse(txt); if (!Array.isArray(arr)) arr = []; } catch { arr = []; }
+      arr.push(obj);
+      return writeFile(root, rel, JSON.stringify(arr, null, 2) + NL);
+    });
+  }
+  function appendJsonl(root, rel, obj) {
+    return appendText(root, rel, JSON.stringify(obj) + NL, false);
   }
 
   // ---------- GitHub ----------
   const ghBase = "https://api.github.com";
   function ghHdrs(tok) {
-    var h = { "Accept": "application/vnd.github+json" };
+    const h = { "Accept": "application/vnd.github+json" };
     if (tok) h["Authorization"] = "Bearer " + tok;
     return h;
   }
   function b64e(t) { return btoa(unescape(encodeURIComponent(t))); }
   function encSeg(p) { return String(p).split("/").map(encodeURIComponent).join("/"); }
   function ghPutFile(opt) {
-    var tok = $("ghToken")?.value.trim();
-    var url = ghBase + "/repos/" + opt.repo + "/contents/" + encSeg(opt.path);
-    var sha;
-    var branch = opt.branch || $("ghBranch")?.value.trim() || "main";
-    var checkUrl = url + (branch ? ("?ref=" + encodeURIComponent(branch)) : "");
+    const tok = $("ghToken")?.value.trim();
+    const url = ghBase + "/repos/" + opt.repo + "/contents/" + encSeg(opt.path);
+    let sha;
+    const branch = opt.branch || $("ghBranch")?.value.trim() || "main";
+    const checkUrl = url + (branch ? ("?ref=" + encodeURIComponent(branch)) : "");
     return fetch(checkUrl, { headers: ghHdrs(tok) }).then(r => r.ok ? r.json() : null).then(j => {
       if (j && j.sha) sha = j.sha;
       return fetch(url, {
@@ -202,62 +237,98 @@
     return p;
   }
 
-  function processOnce(raw) {
+  async function processOnce(raw) {
     try {
-      var parsed = normalize(JSON.parse(raw));
-      var target = parsed.target.toLowerCase();
-      var op = String(parsed.op || "").toLowerCase();
-      var a = parsed.args || {};
+      const parsed = normalize(JSON.parse(raw));
+      const target = parsed.target.toLowerCase();
+      const op = String(parsed.op || "").toLowerCase();
+      const a = parsed.args || {};
 
-      // --- Local
       if (target === "local") {
         if (!ssdRoot) { log("local: no SSD selected"); return; }
-        if (op === "file_ops.write_file") return writeFile(ssdRoot, a.path, a.content).then(() => log("local write ok:", a.path));
-        if (op === "file_ops.mkdirs") return ensureDir(ssdRoot, a.path).then(() => log("local mkdir ok:", a.path));
+        if (op === "file_ops.write_file" || op === "write_file") {
+          await writeFile(ssdRoot, a.path, a.content);
+          log("local write ok:", a.path); return;
+        }
+        if (op === "file_ops.read_file" || op === "read_file") {
+          const txt = await readFile(ssdRoot, a.path);
+          log("local read:", { path: a.path, content: txt }); return;
+        }
+        if (op === "file_ops.mkdirs" || op === "mkdirs") {
+          await ensureDir(ssdRoot, a.path);
+          log("local mkdir ok:", a.path); return;
+        }
+        if (op === "file_ops.delete_file" || op === "delete_file") {
+          await deleteFile(ssdRoot, a.path);
+          log("local delete ok:", a.path); return;
+        }
+        if (op === "file_ops.append_file" || op === "append_file") {
+          const mode = String(a.mode || "text").toLowerCase();
+          if (mode === "json-array") {
+            const obj = a.json ? a.json : (a.content ? JSON.parse(a.content) : {});
+            await appendJsonArray(ssdRoot, a.path, obj);
+            log("local append (json-array):", a.path); return;
+          }
+          if (mode === "jsonl") {
+            const obj2 = a.json ? a.json : (a.content ? JSON.parse(a.content) : {});
+            await appendJsonl(ssdRoot, a.path, obj2);
+            log("local append (jsonl):", a.path); return;
+          }
+          const ensureSep = a.ensureNewline !== false;
+          await appendText(ssdRoot, a.path, a.content || "", ensureSep);
+          log("local append (text):", a.path); return;
+        }
+        if (op === "relay.checkpoint_now") {
+          log("checkpoint requested (stub)"); return;
+        }
+        if (op === "relay.scheduler") {
+          if (a.enabled) {
+            log("scheduler enabled:", a.interval_mins || 30);
+          } else {
+            log("scheduler disabled");
+          }
+          return;
+        }
         log("Unknown local op:", op);
       }
 
-      // --- GitHub
       if (target === "render" || op.startsWith("github.")) {
         if (op === "github.put_file") {
-          return ghPutFile({
+          const out = await ghPutFile({
             repo: a.repo || $("ghRepo")?.value.trim(),
             path: a.path,
             content: a.content || "",
             message: a.message || "",
             branch: a.branch || $("ghBranch")?.value.trim()
-          }).then((out) => {
-            var c = (out && out.commit && out.commit.sha) ? out.commit.sha : "";
-            log("github put_file:", { path: a.path, commit: c ? c.slice(0, 7) : "" });
           });
+          const c = (out && out.commit && out.commit.sha) ? out.commit.sha : "";
+          log("github put_file:", { path: a.path, commit: c ? c.slice(0, 7) : "" }); return;
         }
         log("Unsupported github op:", op);
       }
-
     } catch (e) {
       log("error:", e.message || e);
     }
   }
 
   // ---------- Expose ----------
-window.runCommandBlock = function (raw) {
-  log("runCommandBlock called", raw);
-  return processOnce(raw);
-};
-console.log("[HAL Relay] runCommandBlock exposed");
+  window.runCommandBlock = function (raw) {
+    log("runCommandBlock called", raw);
+    return processOnce(raw);
+  };
+  console.log("[HAL Relay] runCommandBlock exposed");
 
-// ---------- Button wiring ----------
-const runBtn = $("runOnce");
-if (runBtn) {
-  runBtn.addEventListener("click", () => {
-    const rawAll = $("cmdInput")?.value || "";
-    if (!rawAll.trim()) {
-      log("No input in cmdInput");
-      return;
-    }
-    const cmd = rawAll.includes("[KEV_AI::command]") ? 
-      rawAll.replace("[KEV_AI::command]", "").replace("[/KEV_AI::command]", "").trim() :
-      rawAll.trim();
-    processOnce(cmd);
-  });
-}
+  // ---------- Button wiring ----------
+  const runBtn = $("runOnce");
+  if (runBtn) {
+    runBtn.addEventListener("click", () => {
+      const rawAll = $("cmdInput")?.value || "";
+      if (!rawAll.trim()) { log("No input in cmdInput"); return; }
+      const cmd = rawAll.includes("[KEV_AI::command]") ?
+        rawAll.replace("[KEV_AI::command]", "").replace("[/KEV_AI::command]", "").trim() :
+        rawAll.trim();
+      processOnce(cmd);
+      if (S.autoClear === "1" && $("cmdInput")) $("cmdInput").value = "";
+    });
+  }
+})();
