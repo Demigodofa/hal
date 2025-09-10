@@ -12,6 +12,7 @@
     var out = [], i;
     for (i = 0; i < arguments.length; i++) out.push(toStr(arguments[i]));
     var el = $("log");
+    if (!el) return;
     el.textContent += (el.textContent ? NL : "") + out.join(" ");
     el.scrollTop = el.scrollHeight;
   }
@@ -160,12 +161,6 @@
   }
 
   // ---------- Commands ----------
-  function extractBlock(t) {
-    var s = t.indexOf("[KEV_AI::command]");
-    var e = t.indexOf("[/KEV_AI::command]");
-    return (s !== -1 && e !== -1 && e > s) ? t.slice(s + 17, e).trim() : t.trim();
-  }
-
   function normalize(p) {
     if (!p.op && p.action) p.op = p.action;
     if (!p.args) {
@@ -183,86 +178,62 @@
   }
 
   function processOnce(raw) {
-    try {
-      var parsed = normalize(JSON.parse(raw));
-      var target = String(parsed.target || "local").toLowerCase();
-      var op = String(parsed.op || "").toLowerCase();
-      var a = parsed.args || {};
+    return new Promise(async (resolve, reject) => {
+      try {
+        var parsed = normalize(JSON.parse(raw));
+        var target = String(parsed.target || "local").toLowerCase();
+        var op = String(parsed.op || "").toLowerCase();
+        var a = parsed.args || {};
 
-      if (target === "local") {
-        if (!ssdRoot) {
-          log("local: no SSD selected");
-          return;
-        }
-
-        if (op === "file_ops.read_file" || op === "read_file") {
-          return readFile(ssdRoot, a.path).then((r) => log("local read:", r));
-        }
-        if (op === "file_ops.write_file" || op === "write_file") {
-          return writeFile(ssdRoot, a.path, a.content).then(() => log("local write ok:", a.path));
-        }
-        if (op === "file_ops.mkdirs" || op === "mkdirs") {
-          return ensureDir(ssdRoot, a.path).then(() => log("local mkdir ok:", a.path));
-        }
-        if (op === "file_ops.delete_file" || op === "delete_file") {
-          return deleteFile(ssdRoot, a.path).then(() => log("local delete ok:", a.path));
-        }
-        if (op === "file_ops.append_file" || op === "append_file") {
-          var mode = String(a.mode || "text").toLowerCase();
-          if (mode === "json-array") {
-            var obj = a.json ? a.json : (a.content ? JSON.parse(a.content) : {});
-            return appendJsonArray(ssdRoot, a.path, obj).then((r) => log("local append (json-array):", r));
-          } else if (mode === "jsonl") {
-            var obj2 = a.json ? a.json : (a.content ? JSON.parse(a.content) : {});
-            return appendJsonl(ssdRoot, a.path, obj2).then((r) => log("local append (jsonl):", r));
-          } else {
-            var ensure = a.ensureNewline !== false;
-            return appendText(ssdRoot, a.path, a.content || "", ensure).then((r) => log("local append (text):", r));
+        // ---- Local ops ----
+        if (target === "local") {
+          if (!ssdRoot) {
+            log("local: no SSD selected");
+            return reject(new Error("No SSD selected"));
           }
-        }
-        if (op === "relay.checkpoint_now") {
-          return checkpointNow();
-        }
-        if (op === "relay.scheduler") {
-          if (a.enabled) {
-            startScheduler(a.interval_mins || 30);
-            $("schedEnable").checked = true;
-            $("schedEvery").value = String(a.interval_mins || 30);
-          } else {
-            stopScheduler();
-            $("schedEnable").checked = false;
+
+          if (op === "file_ops.mkdirs" || op === "mkdirs") {
+            await ensureDir(ssdRoot, a.path);
+            log("local mkdir ok:", a.path);
+            return resolve({ path: a.path });
           }
-          maybeSave();
-          return;
+          if (op === "file_ops.write_file" || op === "write_file") {
+            await writeFile(ssdRoot, a.path, a.content);
+            log("local write ok:", a.path);
+            return resolve({ path: a.path });
+          }
+
+          // add more SSD ops here (read_file, delete_file, append_file) if needed
+
+          return reject(new Error("Unknown local op: " + op));
         }
 
-        log("local unknown op:", op);
-      }
+        // ---- GitHub ops ----
+        if (target === "render" || op.indexOf("github.") === 0) {
+          if (op !== "github.put_file") {
+            log("github op not supported:", op);
+            return reject(new Error("Unsupported GitHub op: " + op));
+          }
 
-      if (target === "render" || op.indexOf("github.") === 0) {
-        if (op.indexOf("github.") !== 0) {
-          log("render disabled (bypass ON): op not github.* ->", op);
-        } else {
           var repo = a.repo || $("ghRepo").value.trim();
-          if (op === "github.put_file") {
-            return ghPutFile({
-              repo: repo,
-              path: a.path,
-              content: (a.content || ""),
-              message: (a.message || ""),
-              branch: (a.branch || $("ghBranch").value.trim())
-            }).then((out) => {
-              var c = (out && out.commit && out.commit.sha) ? out.commit.sha : "";
-              log("github put_file:", { path: a.path, commit: c ? c.slice(0, 7) : "" });
-            });
-          }
-          log("github op not supported:", op);
+          const out = await ghPutFile({
+            repo: repo,
+            path: a.path,
+            content: (a.content || ""),
+            message: (a.message || ""),
+            branch: (a.branch || $("ghBranch").value.trim())
+          });
+          var c = (out && out.commit && out.commit.sha) ? out.commit.sha : "";
+          log("github put_file:", { path: a.path, commit: c ? c.slice(0, 7) : "" });
+          return resolve({ path: a.path, commit: c });
         }
-      }
 
-    } catch (e) {
-      log("error:", e.message || e);
-    }
+        return reject(new Error("Unknown target/op: " + target + "/" + op));
+      } catch (e) {
+        log("error:", e.message || e);
+        return reject(e);
+      }
+    });
   }
 
   // ---------- Expose to extension ----------
@@ -272,4 +243,3 @@
   };
   console.log("[HAL Relay] runCommandBlock exposed");
 })();
-
