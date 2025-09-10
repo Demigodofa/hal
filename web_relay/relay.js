@@ -240,9 +240,24 @@
   }
 
   // ---------- Expose ----------
-  window.runCommandBlock = function (raw) {
-    log("runCommandBlock called", raw);
-    return processOnce(raw);
-  };
-  console.log("[HAL Relay] runCommandBlock exposed");
-})();
+window.runCommandBlock = function (raw) {
+  log("runCommandBlock called", raw);
+  return processOnce(raw);
+};
+console.log("[HAL Relay] runCommandBlock exposed");
+
+// ---------- Button wiring ----------
+const runBtn = $("runOnce");
+if (runBtn) {
+  runBtn.addEventListener("click", () => {
+    const rawAll = $("cmdInput")?.value || "";
+    if (!rawAll.trim()) {
+      log("No input in cmdInput");
+      return;
+    }
+    const cmd = rawAll.includes("[KEV_AI::command]") ? 
+      rawAll.replace("[KEV_AI::command]", "").replace("[/KEV_AI::command]", "").trim() :
+      rawAll.trim();
+    processOnce(cmd);
+  });
+}
