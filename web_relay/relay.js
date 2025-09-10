@@ -26,8 +26,16 @@
     }
     console.log("[HAL Relay]", ...args);
   }
-  function log(...args) { appendLog("log", ...args); }
-  function ghLog(...args) { appendLog("ghLog", ...args); }
+  function log(...args) {
+  appendLog("log", ...args);
+
+  // Mirror logs upstream so ChatGPT can see them
+  try {
+    window.postMessage({ type: "HAL.relayLog", payload: args }, "*");
+  } catch (e) {
+    console.warn("[HAL Relay] mirrorLog failed:", e);
+  }
+}
 
   // ---------- Settings ----------
   const LS_KEY = "hal-web-relay-settings";
