@@ -10,6 +10,7 @@ ALLOWED_ORIGINS = [
     "https://demigodofa.github.io",   # your GitHub Pages origin
     "https://chat.openai.com",        # keep if you also use the extension
     "https://chatgpt.com",
+    "https://claude.ai/*",
 ]
 
 app.add_middleware(
