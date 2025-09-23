@@ -1,0 +1,8 @@
+{
+  "op": "write_file",
+  "target": "local",
+  "args": {
+    "path": "filename.py",
+    "content": "file contents here"
+  }
+}
